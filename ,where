@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import requests
+import argparse
+import subprocess
+import platform
+import re
+import math
+import json
+import os
+import time
+from pathlib import Path
+
+# --- Script Info ---
+VERSION = "2.1"
+VERSION_HISTORY = f"""
+%(prog)s version {VERSION}
+
+v2.1 (2025-08-02):
+  - Changed verbosity flag to -V/--verbose.
+  - Added version history with -v/--version.
+
+v2.0 (2025-08-02):
+  - Added 'Last Seen' timestamp to VPN tally.
+  - Expanded verbose output for local network details.
+  - Made local network/IP info display by default.
+
+v1.5 (2025-08-02):
+  - Added VPN server tally with '-c' to clear.
+  - Added live GPS location via gpsd with caching and '-f' to force.
+  - Added reverse geocoding for GPS coordinates.
+  - Added latency (ping) to remote server.
+
+v1.0 (2025-08-02):
+  - Initial script with public IP and local Wi-Fi details.
+"""
+
+# --- Settings ---
+DATA_FILE = Path.home() / ".where_script_data.json"
+CACHE_DURATION_SECONDS = 7 * 24 * 60 * 60  # 7 days
+
+# --- Optional Library Imports ---
+try:
+    import gps
+    GPSD_ENABLED = True
+except ImportError:
+    GPSD_ENABLED = False
+
+try:
+    from geopy.geocoders import Nominatim
+    GEOPY_ENABLED = True
+except ImportError:
+    GEOPY_ENABLED = False
+
+try:
+    import psutil
+    import socket
+    PSUTIL_ENABLED = True
+except ImportError:
+    PSUTIL_ENABLED = False
+
+# --- Helper & Data Functions ---
+def format_time_ago(seconds):
+    if seconds < 60:
+        return "just now"
+    elif seconds < 3600:
+        minutes = int(seconds / 60)
+        return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+    elif seconds < 86400:
+        hours = int(seconds / 3600)
+        return f"{hours} hour{'s' if hours > 1 else ''} ago"
+    else:
+        days = int(seconds / 86400)
+        return f"{days} day{'s' if days > 1 else ''} ago"
+
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return {'location_cache': {}, 'vpn_tally': {}}
+    try:
+        with open(DATA_FILE, 'r') as f:
+            data = json.load(f)
+        if 'location_cache' not in data: data['location_cache'] = {}
+        if 'vpn_tally' not in data: data['vpn_tally'] = {}
+        return data
+    except (json.JSONDecodeError, IOError):
+        return {'location_cache': {}, 'vpn_tally': {}}
+
+def save_data(data):
+    try:
+        with open(DATA_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+    except IOError as e:
+        print(f"  [!] Warning: Could not write to data file: {e}")
+
+# --- Core Functionality ---
+def get_latency(ip_address, verbose=False):
+    system = platform.system()
+    try:
+        command = ['ping', '-n', '1', '-w', '1000', ip_address] if system == "Windows" else ['ping', '-c', '1', '-W', '1', ip_address]
+        if verbose: print(f"  [v] Running command: {' '.join(command)}")
+        output = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL)
+        match = re.search(r'time[=<]([\d.]+)\s*ms', output)
+        if match: return f"{match.group(1)} ms"
+    except (subprocess.CalledProcessError, FileNotFoundError): pass
+    return None
+
+def get_address_from_coords(lat, lon, verbose=False):
+    if not GEOPY_ENABLED: return "Geopy library not found. Run: pip install geopy"
+    try:
+        geolocator = Nominatim(user_agent="where_script/1.0")
+        location = geolocator.reverse((lat, lon), exactly_one=True, timeout=10)
+        if verbose and location: print(f"  [v] Geopy raw response: {location.raw}")
+        return location.address if location else "No address found for coordinates."
+    except Exception as e: return f"Address lookup failed: {e}"
+
+def get_gpsd_location():
+    if not GPSD_ENABLED: return None
+    session = None
+    try:
+        session = gps.gps(mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE)
+        for _ in range(5):
+            report = next(session)
+            if report['class'] == 'TPV' and report.mode >= 2:
+                return {'lat': report.lat, 'lon': report.lon, 'alt': report.get('alt', 'n/a')}
+    except Exception: return None
+    finally:
+        if session: session.close()
+    return None
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 3958.8
+    lat1_rad, lon1_rad = math.radians(lat1), math.radians(lon1)
+    lat2_rad, lon2_rad = math.radians(lat2), math.radians(lon2)
+    dlon, dlat = lon2_rad - lon1_rad, lat2_rad - lat1_rad
+    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+def get_ip_details(verbose=False, force_refresh=False):
+    data = load_data()
+    gps_details = None
+    location_cache = data.get('location_cache', {})
+    if not force_refresh and location_cache and (time.time() - location_cache.get('timestamp', 0) < CACHE_DURATION_SECONDS):
+        gps_details = location_cache
+        print("Using cached GPS location. 💾")
+    
+    if gps_details is None:
+        if force_refresh: print("Forcing refresh of GPS location from gpsd... 🛰️")
+        else: print("Attempting to get live location from gpsd...")
+        gps_details = get_gpsd_location()
+        if gps_details:
+            gps_details['timestamp'] = time.time()
+            data['location_cache'] = gps_details
+            save_data(data)
+
+    if gps_details:
+        print("\n## 🛰️ Live GPS Location")
+        lat, lon = gps_details['lat'], gps_details['lon']
+        print(f"  {'Latitude:':<25} {lat:.6f}")
+        print(f"  {'Longitude:':<25} {lon:.6f}")
+        if isinstance(gps_details.get('alt'), (int, float)):
+            print(f"  {'Altitude:':<25} {gps_details['alt']:.2f} meters")
+        time_since_update = time.time() - gps_details.get('timestamp', time.time())
+        print(f"  {'GPS Last Updated:':<25} {format_time_ago(time_since_update)}")
+        address = get_address_from_coords(lat, lon, verbose=verbose)
+        print(f"  {'Approx. Address:':<25} {address}")
+    else:
+        if GPSD_ENABLED: print("  Could not get a live GPS fix.")
+        else: print("  `gpsd-py3` library not found. Skipping live location features.")
+
+    print("\nFetching your IP details... 🕵️‍♂️")
+    url = "http://ip-api.com/json/?fields=status,message,country,regionName,city,lat,lon,isp,query,hosting"
+    try:
+        response = requests.get(url)
+        response.raise_for_status() 
+        ip_data = response.json()
+        
+        if verbose: print(f"  [v] API Response: {json.dumps(ip_data, indent=2)}")
+
+        if ip_data.get('status') == 'success':
+            server_ip = ip_data.get('query')
+            print("\n## 📍 IP-Based Location Details")
+            print(f"  {'Public IP:':<25} {server_ip}")
+            print(f"  {'Country:':<25} {ip_data.get('country')}")
+            print(f"  {'Region:':<25} {ip_data.get('regionName')}")
+            print(f"  {'City:':<25} {ip_data.get('city')}")
+
+            print("\n## 🌐 Connection Details")
+            latency = get_latency(server_ip, verbose=verbose)
+            print(f"  {'Latency:':<25} {latency or 'Unreachable'}")
+            isp_lat, isp_lon = ip_data.get('lat'), ip_data.get('lon')
+            if gps_details and isp_lat and isp_lon:
+                distance = calculate_distance(gps_details['lat'], gps_details['lon'], isp_lat, isp_lon)
+                print(f"  {'Distance to ISP Server:':<25} {distance:.2f} miles")
+            
+            is_hosting = ip_data.get('hosting', False)
+            print(f"  {'VPN/Proxy Detected:':<25} {'Yes' if is_hosting else 'No'}")
+            print(f"  {'Provider/ISP:':<25} {ip_data.get('isp')}")
+
+            if is_hosting:
+                tally = data.get('vpn_tally', {})
+                existing_record = tally.get(server_ip)
+                if existing_record:
+                    new_count = existing_record.get('count', 0) + 1
+                    print(f"  {'Times Seen:':<25} {new_count}")
+                    last_seen_ts = existing_record.get('last_seen')
+                    if last_seen_ts:
+                        last_seen_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_seen_ts))
+                        print(f"  {'Last Seen:':<25} {last_seen_str}")
+                else:
+                    new_count = 1
+                    print(f"  {'Times Seen:':<25} 1 (✨ New Server!)")
+                    print(f"  {'Last Seen:':<25} Never")
+                
+                tally[server_ip] = {'count': new_count, 'last_seen': time.time()}
+                data['vpn_tally'] = tally
+                save_data(data)
+        else:
+            print(f"\n❌ API Error: Could not fetch details. Message: {ip_data.get('message')}")
+    except requests.exceptions.RequestException:
+        print("\n❌ Network Error: Could not connect to the public IP API.")
+
+def get_wifi_details(verbose=False):
+    system = platform.system()
+    wifi_data = {}
+    try:
+        if system == "Linux":
+            if verbose: print("  [v] Running command: iw dev")
+            output = subprocess.check_output(['iw', 'dev'], text=True, stderr=subprocess.DEVNULL)
+            interfaces = re.findall(r'Interface\s+([^\s]+)', output)
+            for iface in interfaces:
+                details = {}
+                if verbose: print(f"  [v] Running command: iw dev {iface} link")
+                link_output = subprocess.check_output(['iw', 'dev', iface, 'link'], text=True, stderr=subprocess.DEVNULL)
+                ssid_match = re.search(r'SSID:\s+(.+)', link_output)
+                if not ssid_match: continue
+                details['SSID'] = ssid_match.group(1)
+                freq_match = re.search(r'freq:\s+(\d+)', link_output)
+                if freq_match:
+                    freq = int(freq_match.group(1))
+                    if 2400 < freq < 2500: details['Band'] = "2.4 GHz"
+                    elif 5100 < freq < 5900: details['Band'] = "5 GHz"
+                    elif 5900 < freq < 7200: details['Band'] = "6 GHz"
+                wifi_data[iface] = details
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+    return wifi_data
+
+def display_local_network_info(verbose=False):
+    if not PSUTIL_ENABLED:
+        print("\n## 💻 Local Network Details")
+        print("  To show local IP info, please install psutil:")
+        print("  pip install psutil")
+        return
+
+    print("\n## 💻 Local Network Details")
+    wifi_details = get_wifi_details(verbose=verbose)
+    try:
+        stats = psutil.net_if_stats()
+        addrs = psutil.net_if_addrs()
+        if verbose:
+            print(f"  [v] psutil addresses: {addrs}")
+            print(f"  [v] psutil stats: {stats}")
+        
+        found_active_interface = False
+        for iface, iface_addrs in addrs.items():
+            if stats.get(iface) and stats[iface].isup and 'lo' not in iface.lower():
+                found_active_interface = True
+                print(f"\n  Interface: {iface}")
+                for addr in iface_addrs:
+                    if addr.family == socket.AF_INET:
+                        print(f"    {'Local IP:':<10} {addr.address}")
+                        break
+                if iface in wifi_details:
+                    details = wifi_details[iface]
+                    print(f"    {'SSID:':<10} {details.get('SSID', 'N/A')}")
+                    print(f"    {'Band:':<10} {details.get('Band', 'N/A')}")
+
+        if not found_active_interface:
+            print("  No active non-loopback network interface found.")
+    except Exception as e:
+        print(f"  Could not retrieve local interface details: {e}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Fetches public and local network information.",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        '-v', '--version',
+        action='version',
+        version=VERSION_HISTORY
+    )
+    parser.add_argument(
+        '-V', '--verbose',
+        action='store_true',
+        help='Enable verbose output (shows raw data and commands).'
+    )
+    parser.add_argument(
+        '-f', '--force-refresh',
+        action='store_true',
+        help='Force a refresh of the GPS location, ignoring the cache.'
+    )
+    parser.add_argument(
+        '-c', '--clear-tally',
+        action='store_true',
+        help='Clear all VPN server tally data.'
+    )
+    args = parser.parse_args()
+
+    if args.clear_tally:
+        data = load_data()
+        if data['vpn_tally']:
+            data['vpn_tally'] = {}
+            save_data(data)
+            print("VPN server tally has been cleared. ✨")
+        else:
+            print("VPN server tally is already empty.")
+        if not args.force_refresh:
+             exit()
+
+    get_ip_details(verbose=args.verbose, force_refresh=args.force_refresh)
+    display_local_network_info(verbose=args.verbose)
