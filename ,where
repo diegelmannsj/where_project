@@ -13,23 +13,24 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "5.6"
+VERSION = "5.7"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v5.7 (2025-08-03):
+  - Bug fix: Location data is now correctly logged for previously seen IPs.
 
 v5.6 (2025-08-03):
   - Changed --list to display 'Not Logged' if location data is missing.
 
 v5.5 (2025-08-03):
   - Added server location (City, Region, Country) to the --list output.
-  - Tally now stores location data for each IP on first sight.
 
 v5.4 (2025-08-03):
   - Changed 'Last Seen' format in --list output to be relative.
 
 v5.3 (2025-08-03):
-  - Improved --list output with clearer status and current IP highlighting.
-  - Bug fix: Restored missing print statements for GPS and IP details.
+  - Improved --list output and fixed major display bugs.
 """
 
 # --- Settings ---
@@ -510,6 +511,12 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                 updated_record['count'] = new_count
                 updated_record['last_seen'] = current_time
                 updated_record['last_status'] = status_for_tally
+                # Backfill location data if it's missing from an old record
+                if 'city' not in updated_record or not updated_record['city']:
+                    updated_record['city'] = ip_data.get('city')
+                    updated_record['region'] = ip_data.get('regionName')
+                    updated_record['country_code'] = ip_data.get('countryCode')
+
             else:
                 new_count = 1
                 print(f"  {'Times Seen:':<25} 1 (New IP!)")
