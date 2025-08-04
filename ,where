@@ -13,9 +13,15 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "5.8"
+VERSION = "6.0"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v6.0 (2025-08-04):
+  - Bug fix: Corrected IndentationError from missing code block in v5.9.
+
+v5.9 (2025-08-04):
+  - Bug fix: Prevented cached VPN status from being overwritten incorrectly.
 
 v5.8 (2025-08-03):
   - Fixed a bug where location data was not being saved for existing IPs.
@@ -25,12 +31,6 @@ v5.7 (2025-08-03):
 
 v5.6 (2025-08-03):
   - Changed --list to display 'Not Logged' if location data is missing.
-
-v5.5 (2025-08-03):
-  - Added server location (City, Region, Country) to the --list output.
-
-v5.4 (2025-08-03):
-  - Changed 'Last Seen' format in --list output to be relative.
 """
 
 # --- Settings ---
@@ -436,6 +436,7 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                 if verbose: print(f"  [v] Using cached VPN result for {server_ip}")
                 vpn_message = cached_result.get('message', "No")
                 vpn_detected = cached_result.get('detected', False)
+                status_for_tally = cached_result.get('status', 'Standard')
                 timestamp = cached_result.get('timestamp', 0)
                 time_left = CACHE_DURATION_SECONDS - (time.time() - timestamp)
                 vpn_message += f" (cached, expires in {format_time_remaining(time_left)})"
@@ -470,7 +471,12 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                     status_for_tally = "VPN (Manual)"
                     vpn_detected = True
 
-                data['vpn_results_cache'][server_ip] = {'timestamp': time.time(), 'detected': vpn_detected, 'message': vpn_message}
+                data['vpn_results_cache'][server_ip] = {
+                    'timestamp': time.time(),
+                    'detected': vpn_detected,
+                    'message': vpn_message,
+                    'status': status_for_tally
+                }
 
             print(f"  {'VPN/Proxy Detected:':<25} {vpn_message}")
             print(f"  {'Provider/ISP:':<25} {ip_data.get('isp')}")
