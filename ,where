@@ -13,9 +13,13 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "5.4"
+VERSION = "5.5"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v5.5 (2025-08-03):
+  - Added server location (City, Region, Country) to the --list output.
+  - Tally now stores location data for each IP on first sight.
 
 v5.4 (2025-08-03):
   - Changed 'Last Seen' format in --list output to be relative.
@@ -26,9 +30,6 @@ v5.3 (2025-08-03):
 
 v5.2 (2025-08-03):
   - Added -l/--list flag to list all known IPs, sorted by last seen.
-
-v5.1 (2025-08-03):
-  - Added 'is_vpn' status to the ip_tally record for each IP.
 """
 
 # --- Settings ---
@@ -193,8 +194,8 @@ def list_known_ips(data):
 
     sorted_ips = sorted(tally.items(), key=lambda item: item[1].get('last_seen', 0), reverse=True)
 
-    print(f"\n{'':<3}{'IP Address':<20} {'Last Seen':<30} {'Status'}")
-    print(f"{'-'*3}{'-'*20} {'-'*30} {'-'*20}")
+    print(f"\n{'':<3}{'IP Address':<18} {'Last Seen':<28} {'Location':<30} {'Status'}")
+    print(f"{'-'*3}{'-'*18} {'-'*28} {'-'*30} {'-'*20}")
 
     for ip, details in sorted_ips:
         last_seen_ts = details.get('last_seen', 0)
@@ -203,10 +204,15 @@ def list_known_ips(data):
         time_since_str = format_time_since(time_since_seconds)
         last_seen_str = f"{date_str} {time_since_str}"
         
+        city = details.get('city', 'N/A')
+        region = details.get('region', 'N/A')
+        country = details.get('country_code', 'N/A')
+        location_str = f"{city}, {region}, {country}"
+
         status = details.get('last_status', 'Unknown')
         
         prefix = "->" if ip == current_ip else "  "
-        print(f"{prefix:<3}{ip:<20} {last_seen_str:<30} {status}")
+        print(f"{prefix:<3}{ip:<18} {last_seen_str:<28} {location_str:<30} {status}")
 
 def update_vpn_ip_list(data, verbose=False):
     """Fetches a list of known VPN CIDR ranges and updates the data object."""
@@ -399,7 +405,7 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
             else: print("  `gpsd-py3` library not found. Skipping live location features.")
 
     print("\nFetching your IP details...")
-    url = "http://ip-api.com/json/?fields=status,message,country,regionName,city,lat,lon,isp,query,hosting"
+    url = "http://ip-api.com/json/?fields=status,message,country,countryCode,regionName,city,lat,lon,isp,query,hosting"
     try:
         response = requests.get(url)
         response.raise_for_status() 
@@ -496,13 +502,25 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                 first_seen_str = time.strftime(time_format, time.localtime(first_seen_ts))
                 time_since_first = time.time() - first_seen_ts
                 print(f"  {'First Seen:':<25} {first_seen_str} {format_time_since(time_since_first)}")
-                updated_record = {'count': new_count, 'last_seen': current_time, 'first_seen': first_seen_ts, 'last_status': status_for_tally}
+                
+                updated_record = existing_record
+                updated_record['count'] = new_count
+                updated_record['last_seen'] = current_time
+                updated_record['last_status'] = status_for_tally
             else:
                 new_count = 1
                 print(f"  {'Times Seen:':<25} 1 (New IP!)")
                 print(f"  {'Last Seen:':<25} Never")
                 print(f"  {'First Seen:':<25} {time.strftime(time_format, time.localtime(current_time))}")
-                updated_record = {'count': new_count, 'last_seen': current_time, 'first_seen': current_time, 'last_status': status_for_tally}
+                updated_record = {
+                    'count': new_count, 
+                    'last_seen': current_time, 
+                    'first_seen': current_time, 
+                    'last_status': status_for_tally,
+                    'city': ip_data.get('city'),
+                    'region': ip_data.get('regionName'),
+                    'country_code': ip_data.get('countryCode')
+                }
             
             tally[server_ip] = updated_record
             data['ip_tally'] = tally
