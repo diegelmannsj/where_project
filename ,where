@@ -13,27 +13,28 @@ import time
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "2.1"
+VERSION = "3.0"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
 
-v2.1 (2025-08-02):
-  - Changed verbosity flag to -V/--verbose.
-  - Added version history with -v/--version.
+v3.0 (2025-08-02):
+  - Changed MAC address label to be dynamic (e.g., "eth0 MAC:").
 
-v2.0 (2025-08-02):
-  - Added 'Last Seen' timestamp to VPN tally.
-  - Expanded verbose output for local network details.
-  - Made local network/IP info display by default.
+v2.9 (2025-08-02):
+  - Added network speed test with -s/--speedtest flag.
+  - Added MAC Address to local network display.
 
-v1.5 (2025-08-02):
-  - Added VPN server tally with '-c' to clear.
-  - Added live GPS location via gpsd with caching and '-f' to force.
-  - Added reverse geocoding for GPS coordinates.
-  - Added latency (ping) to remote server.
+v2.8 (2025-08-02):
+  - Added Signal Strength to default local network display.
 
-v1.0 (2025-08-02):
-  - Initial script with public IP and local Wi-Fi details.
+v2.7 (2025-08-02):
+  - Added tab-completion for flags via argcomplete.
+
+v2.6 (2025-08-02):
+  - Added -G/--no-gps flag to skip all GPS functions.
+
+v2.5 (2025-08-02):
+  - Added Default Gateway to local network details.
 """
 
 # --- Settings ---
@@ -60,10 +61,28 @@ try:
 except ImportError:
     PSUTIL_ENABLED = False
 
+try:
+    import netifaces
+    NETIFACES_ENABLED = True
+except ImportError:
+    NETIFACES_ENABLED = False
+
+try:
+    import argcomplete
+    ARGCOMPLETE_ENABLED = True
+except ImportError:
+    ARGCOMPLETE_ENABLED = False
+
+try:
+    import speedtest
+    SPEEDTEST_ENABLED = True
+except ImportError:
+    SPEEDTEST_ENABLED = False
+
+
 # --- Helper & Data Functions ---
 def format_time_ago(seconds):
-    if seconds < 60:
-        return "just now"
+    if seconds < 60: return "just now"
     elif seconds < 3600:
         minutes = int(seconds / 60)
         return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
@@ -73,6 +92,20 @@ def format_time_ago(seconds):
     else:
         days = int(seconds / 86400)
         return f"{days} day{'s' if days > 1 else ''} ago"
+
+def format_time_since(seconds):
+    if seconds < 3600:
+        minutes = int(seconds / 60)
+        return f"({minutes} minute{'s' if minutes > 1 else ''} since)"
+    elif seconds < 86400:
+        hours = int(seconds / 3600)
+        return f"({hours} hour{'s' if hours > 1 else ''} since)"
+    elif seconds < 1209600:
+        days = int(seconds / 86400)
+        return f"({days} day{'s' if days > 1 else ''} since)"
+    else:
+        weeks = int(seconds / 604800)
+        return f"({weeks} week{'s' if weeks > 1 else ''} since)"
 
 def load_data():
     if not os.path.exists(DATA_FILE):
@@ -94,6 +127,36 @@ def save_data(data):
         print(f"  [!] Warning: Could not write to data file: {e}")
 
 # --- Core Functionality ---
+def run_speed_test(verbose=False):
+    if not SPEEDTEST_ENABLED:
+        print("\n## 💨 Network Speed")
+        print("  To run a speed test, please install the library:")
+        print("  pip install speedtest-cli")
+        return
+
+    print("\n## 💨 Network Speed")
+    print("  Performing speed test... (this may take a moment)")
+    try:
+        st = speedtest.Speedtest()
+        st.get_best_server()
+        st.download()
+        st.upload()
+        results = st.results.dict()
+
+        if verbose: print(f"  [v] Speedtest raw response: {results}")
+        
+        ping = results['ping']
+        download_speed = results['download'] / 1_000_000
+        upload_speed = results['upload'] / 1_000_000
+
+        print(f"  {'Ping:':<10} {ping:.2f} ms")
+        print(f"  {'Download:':<10} {download_speed:.2f} Mbps")
+        print(f"  {'Upload:':<10} {upload_speed:.2f} Mbps")
+        print(f"  {'Server:':<10} {results['server']['name']} ({results['server']['country']})")
+
+    except Exception as e:
+        print(f"  Could not complete speed test: {e}")
+
 def get_latency(ip_address, verbose=False):
     system = platform.system()
     try:
@@ -137,37 +200,39 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-def get_ip_details(verbose=False, force_refresh=False):
+def get_ip_details(verbose=False, force_refresh=False, no_gps=False):
     data = load_data()
     gps_details = None
-    location_cache = data.get('location_cache', {})
-    if not force_refresh and location_cache and (time.time() - location_cache.get('timestamp', 0) < CACHE_DURATION_SECONDS):
-        gps_details = location_cache
-        print("Using cached GPS location. 💾")
     
-    if gps_details is None:
-        if force_refresh: print("Forcing refresh of GPS location from gpsd... 🛰️")
-        else: print("Attempting to get live location from gpsd...")
-        gps_details = get_gpsd_location()
-        if gps_details:
-            gps_details['timestamp'] = time.time()
-            data['location_cache'] = gps_details
-            save_data(data)
+    if not no_gps:
+        location_cache = data.get('location_cache', {})
+        if not force_refresh and location_cache and (time.time() - location_cache.get('timestamp', 0) < CACHE_DURATION_SECONDS):
+            gps_details = location_cache
+            print("Using cached GPS location. 💾")
+        
+        if gps_details is None:
+            if force_refresh: print("Forcing refresh of GPS location from gpsd... 🛰️")
+            else: print("Attempting to get live location from gpsd...")
+            gps_details = get_gpsd_location()
+            if gps_details:
+                gps_details['timestamp'] = time.time()
+                data['location_cache'] = gps_details
+                save_data(data)
 
-    if gps_details:
-        print("\n## 🛰️ Live GPS Location")
-        lat, lon = gps_details['lat'], gps_details['lon']
-        print(f"  {'Latitude:':<25} {lat:.6f}")
-        print(f"  {'Longitude:':<25} {lon:.6f}")
-        if isinstance(gps_details.get('alt'), (int, float)):
-            print(f"  {'Altitude:':<25} {gps_details['alt']:.2f} meters")
-        time_since_update = time.time() - gps_details.get('timestamp', time.time())
-        print(f"  {'GPS Last Updated:':<25} {format_time_ago(time_since_update)}")
-        address = get_address_from_coords(lat, lon, verbose=verbose)
-        print(f"  {'Approx. Address:':<25} {address}")
-    else:
-        if GPSD_ENABLED: print("  Could not get a live GPS fix.")
-        else: print("  `gpsd-py3` library not found. Skipping live location features.")
+        if gps_details:
+            print("\n## 🛰️ Live GPS Location")
+            lat, lon = gps_details['lat'], gps_details['lon']
+            print(f"  {'Latitude:':<25} {lat:.6f}")
+            print(f"  {'Longitude:':<25} {lon:.6f}")
+            if isinstance(gps_details.get('alt'), (int, float)):
+                print(f"  {'Altitude:':<25} {gps_details['alt']:.2f} meters")
+            time_since_update = time.time() - gps_details.get('timestamp', time.time())
+            print(f"  {'GPS Last Updated:':<25} {format_time_ago(time_since_update)}")
+            address = get_address_from_coords(lat, lon, verbose=verbose)
+            print(f"  {'Approx. Address:':<25} {address}")
+        else:
+            if GPSD_ENABLED: print("  Could not get a live GPS fix.")
+            else: print("  `gpsd-py3` library not found. Skipping live location features.")
 
     print("\nFetching your IP details... 🕵️‍♂️")
     url = "http://ip-api.com/json/?fields=status,message,country,regionName,city,lat,lon,isp,query,hosting"
@@ -201,19 +266,34 @@ def get_ip_details(verbose=False, force_refresh=False):
             if is_hosting:
                 tally = data.get('vpn_tally', {})
                 existing_record = tally.get(server_ip)
+                current_time = time.time()
+                time_format = '%m/%d/%Y %I:%M:%S %p'
+                
                 if existing_record:
                     new_count = existing_record.get('count', 0) + 1
+                    first_seen_ts = existing_record.get('first_seen', current_time)
                     print(f"  {'Times Seen:':<25} {new_count}")
+                    
                     last_seen_ts = existing_record.get('last_seen')
                     if last_seen_ts:
-                        last_seen_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_seen_ts))
-                        print(f"  {'Last Seen:':<25} {last_seen_str}")
+                        last_seen_str = time.strftime(time_format, time.localtime(last_seen_ts))
+                        time_since = time.time() - last_seen_ts
+                        print(f"  {'Last Seen:':<25} {last_seen_str} {format_time_since(time_since)}")
+
+                    first_seen_str = time.strftime(time_format, time.localtime(first_seen_ts))
+                    time_since_first = time.time() - first_seen_ts
+                    print(f"  {'First Seen:':<25} {first_seen_str} {format_time_since(time_since_first)}")
+                    
+                    updated_record = {'count': new_count, 'last_seen': current_time, 'first_seen': first_seen_ts}
                 else:
                     new_count = 1
                     print(f"  {'Times Seen:':<25} 1 (✨ New Server!)")
                     print(f"  {'Last Seen:':<25} Never")
+                    print(f"  {'First Seen:':<25} {time.strftime(time_format, time.localtime(current_time))}")
+                    
+                    updated_record = {'count': new_count, 'last_seen': current_time, 'first_seen': current_time}
                 
-                tally[server_ip] = {'count': new_count, 'last_seen': time.time()}
+                tally[server_ip] = updated_record
                 data['vpn_tally'] = tally
                 save_data(data)
         else:
@@ -235,7 +315,11 @@ def get_wifi_details(verbose=False):
                 link_output = subprocess.check_output(['iw', 'dev', iface, 'link'], text=True, stderr=subprocess.DEVNULL)
                 ssid_match = re.search(r'SSID:\s+(.+)', link_output)
                 if not ssid_match: continue
-                details['SSID'] = ssid_match.group(1)
+                details['SSID'] = ssid_match.group(1).strip()
+
+                signal_match = re.search(r'signal:\s+(-\d+\.\d+\s+dBm)', link_output)
+                if signal_match: details['Signal'] = signal_match.group(1)
+
                 freq_match = re.search(r'freq:\s+(\d+)', link_output)
                 if freq_match:
                     freq = int(freq_match.group(1))
@@ -256,6 +340,19 @@ def display_local_network_info(verbose=False):
 
     print("\n## 💻 Local Network Details")
     wifi_details = get_wifi_details(verbose=verbose)
+    
+    default_gateway_ip, default_gateway_iface = None, None
+    if NETIFACES_ENABLED:
+        try:
+            gws = netifaces.gateways()
+            if 'default' in gws and netifaces.AF_INET in gws['default']:
+                default_gateway_ip, default_gateway_iface = gws['default'][netifaces.AF_INET]
+        except Exception:
+            pass
+    elif verbose:
+        print("  [v] netifaces library not found. Skipping gateway detection.")
+
+
     try:
         stats = psutil.net_if_stats()
         addrs = psutil.net_if_addrs()
@@ -270,12 +367,21 @@ def display_local_network_info(verbose=False):
                 print(f"\n  Interface: {iface}")
                 for addr in iface_addrs:
                     if addr.family == socket.AF_INET:
-                        print(f"    {'Local IP:':<10} {addr.address}")
-                        break
+                        print(f"    {'Local IP:':<15} {addr.address}")
+                    elif addr.family == psutil.AF_LINK:
+                        print(f"    {f'{iface} MAC:':<15} {addr.address}")
+                
+                if iface == default_gateway_iface:
+                    print(f"    {'Gateway:':<15} {default_gateway_ip}")
+                
                 if iface in wifi_details:
                     details = wifi_details[iface]
-                    print(f"    {'SSID:':<10} {details.get('SSID', 'N/A')}")
-                    print(f"    {'Band:':<10} {details.get('Band', 'N/A')}")
+                    print(f"    {'SSID:':<15} {details.get('SSID', 'N/A')}")
+                    if details.get('BSSID'):
+                        print(f"    {'BSSID:':<15} {details['BSSID']}")
+                    print(f"    {'Band:':<15} {details.get('Band', 'N/A')}")
+                    if details.get('Signal'):
+                        print(f"    {'Signal:':<15} {details['Signal']}")
 
         if not found_active_interface:
             print("  No active non-loopback network interface found.")
@@ -307,6 +413,20 @@ if __name__ == "__main__":
         action='store_true',
         help='Clear all VPN server tally data.'
     )
+    parser.add_argument(
+        '-G', '--no-gps',
+        action='store_true',
+        help='Skip all GPS-related functions (live and cached).'
+    )
+    parser.add_argument(
+        '-s', '--speedtest',
+        action='store_true',
+        help='Perform a network speed test.'
+    )
+    
+    if ARGCOMPLETE_ENABLED:
+        argcomplete.autocomplete(parser)
+
     args = parser.parse_args()
 
     if args.clear_tally:
@@ -317,8 +437,10 @@ if __name__ == "__main__":
             print("VPN server tally has been cleared. ✨")
         else:
             print("VPN server tally is already empty.")
-        if not args.force_refresh:
+        if not args.force_refresh and not args.no_gps:
              exit()
 
-    get_ip_details(verbose=args.verbose, force_refresh=args.force_refresh)
+    get_ip_details(verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps)
     display_local_network_info(verbose=args.verbose)
+    if args.speedtest:
+        run_speed_test(verbose=args.verbose)
