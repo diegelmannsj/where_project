@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "5.5"
+VERSION = "5.6"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v5.6 (2025-08-03):
+  - Changed --list to display 'Not Logged' if location data is missing.
 
 v5.5 (2025-08-03):
   - Added server location (City, Region, Country) to the --list output.
@@ -27,9 +30,6 @@ v5.4 (2025-08-03):
 v5.3 (2025-08-03):
   - Improved --list output with clearer status and current IP highlighting.
   - Bug fix: Restored missing print statements for GPS and IP details.
-
-v5.2 (2025-08-03):
-  - Added -l/--list flag to list all known IPs, sorted by last seen.
 """
 
 # --- Settings ---
@@ -204,10 +204,13 @@ def list_known_ips(data):
         time_since_str = format_time_since(time_since_seconds)
         last_seen_str = f"{date_str} {time_since_str}"
         
-        city = details.get('city', 'N/A')
-        region = details.get('region', 'N/A')
-        country = details.get('country_code', 'N/A')
-        location_str = f"{city}, {region}, {country}"
+        city = details.get('city')
+        if city:
+            region = details.get('region', 'N/A')
+            country = details.get('country_code', 'N/A')
+            location_str = f"{city}, {region}, {country}"
+        else:
+            location_str = "Not Logged"
 
         status = details.get('last_status', 'Unknown')
         
