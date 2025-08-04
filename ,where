@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "5.7"
+VERSION = "5.8"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v5.8 (2025-08-03):
+  - Fixed a bug where location data was not being saved for existing IPs.
 
 v5.7 (2025-08-03):
   - Bug fix: Location data is now correctly logged for previously seen IPs.
@@ -28,9 +31,6 @@ v5.5 (2025-08-03):
 
 v5.4 (2025-08-03):
   - Changed 'Last Seen' format in --list output to be relative.
-
-v5.3 (2025-08-03):
-  - Improved --list output and fixed major display bugs.
 """
 
 # --- Settings ---
@@ -78,7 +78,6 @@ except ImportError:
 
 # --- Helper & Data Functions ---
 def format_time_remaining(seconds):
-    """Converts a duration in seconds to a human-readable 'time remaining' string."""
     if seconds <= 0:
         return "now"
     
@@ -100,7 +99,6 @@ def format_time_remaining(seconds):
     return ", ".join(parts)
 
 def format_time_ago(seconds):
-    """Converts a duration in seconds to a 'time ago' string."""
     if seconds < 60: return "just now"
     elif seconds < 3600:
         minutes = int(seconds / 60)
@@ -113,7 +111,6 @@ def format_time_ago(seconds):
         return f"{days} day{'s' if days != 1 else ''} ago"
 
 def format_time_since(seconds):
-    """Converts a duration in seconds to a 'time since' string."""
     if seconds < 3600:
         minutes = int(seconds / 60)
         return f"({minutes} minute{'s' if minutes != 1 else ''} since)"
@@ -128,7 +125,6 @@ def format_time_since(seconds):
         return f"({weeks} week{'s' if weeks != 1 else ''} since)"
 
 def load_data(verbose=False):
-    """Loads the main JSON config file, creating defaults if it doesn't exist."""
     if verbose: print(f"  [v] Loading data from: {CONFIG_FILE}")
     
     defaults = {
@@ -169,7 +165,6 @@ def load_data(verbose=False):
         return defaults
 
 def save_data(data, verbose=False):
-    """Saves data to the main JSON config file."""
     if verbose: print(f"  [v] Saving data to: {CONFIG_FILE}")
     try:
         with open(CONFIG_FILE, 'w') as f:
@@ -179,7 +174,6 @@ def save_data(data, verbose=False):
 
 # --- Core Functionality ---
 def list_known_ips(data):
-    """Prints a sorted list of all known IPs from the tally."""
     tally = data.get('ip_tally', {})
     if not tally:
         print("No IP history found.")
@@ -219,7 +213,6 @@ def list_known_ips(data):
         print(f"{prefix:<3}{ip:<18} {last_seen_str:<28} {location_str:<30} {status}")
 
 def update_vpn_ip_list(data, verbose=False):
-    """Fetches a list of known VPN CIDR ranges and updates the data object."""
     print("Updating known VPN IP list...")
     url = "https://raw.githubusercontent.com/X4BNet/lists_vpn/refs/heads/main/ipv4.txt"
     try:
@@ -248,7 +241,6 @@ def update_vpn_ip_list(data, verbose=False):
         return data
 
 def is_known_vpn(data, ip_address_str, verbose=False):
-    """Checks if an IP is in a known VPN CIDR range, returns metadata on match."""
     cidr_cache = data['vpn_ip_list']
     
     if not cidr_cache.get('cidrs') or (time.time() - cidr_cache.get('timestamp', 0) > CACHE_DURATION_SECONDS):
@@ -271,7 +263,6 @@ def is_known_vpn(data, ip_address_str, verbose=False):
     return None
 
 def run_speed_test(data, verbose=False):
-    """Performs a network speed test, logs the results, and checks for records."""
     if not SPEEDTEST_ENABLED:
         print("\n## Network Speed")
         print("  To run a speed test, please install the library:")
@@ -326,7 +317,6 @@ def run_speed_test(data, verbose=False):
         return data
 
 def get_latency(ip_address, verbose=False):
-    """Pings an IP address once to get the latency."""
     system = platform.system()
     try:
         command = ['ping', '-n', '1', '-w', '1000', ip_address] if system == "Windows" else ['ping', '-c', '1', '-W', '1', ip_address]
@@ -338,7 +328,6 @@ def get_latency(ip_address, verbose=False):
     return None
 
 def get_address_from_coords(lat, lon, verbose=False):
-    """Performs reverse geocoding to find an address from GPS coordinates."""
     if not GEOPY_ENABLED: return "Geopy library not found. Run: pip install geopy"
     try:
         geolocator = Nominatim(user_agent="where_script/1.0")
@@ -348,7 +337,6 @@ def get_address_from_coords(lat, lon, verbose=False):
     except Exception as e: return f"Address lookup failed: {e}"
 
 def get_gpsd_location(verbose=False):
-    """Connects to gpsd and retrieves the current location details."""
     if not GPSD_ENABLED: return None
     session = None
     try:
@@ -367,7 +355,6 @@ def get_gpsd_location(verbose=False):
     return None
 
 def calculate_distance(lat1, lon1, lat2, lon2):
-    """Calculates the distance between two GPS coordinates using the Haversine formula."""
     R = 3958.8
     lat1_rad, lon1_rad = math.radians(lat1), math.radians(lon1)
     lat2_rad, lon2_rad = math.radians(lat2), math.radians(lon2)
@@ -377,7 +364,6 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_manual=False):
-    """Fetches and displays all remote location details."""
     gps_details = None
     
     if not no_gps:
@@ -511,8 +497,7 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                 updated_record['count'] = new_count
                 updated_record['last_seen'] = current_time
                 updated_record['last_status'] = status_for_tally
-                # Backfill location data if it's missing from an old record
-                if 'city' not in updated_record or not updated_record['city']:
+                if 'city' not in updated_record or not updated_record.get('city'):
                     updated_record['city'] = ip_data.get('city')
                     updated_record['region'] = ip_data.get('regionName')
                     updated_record['country_code'] = ip_data.get('countryCode')
