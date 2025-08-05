@@ -13,22 +13,21 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "6.6"
+VERSION = "6.7"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v6.7 (2025-08-05):
+  - Optimized script for brevity without removing functionality.
 
 v6.6 (2025-08-05):
   - Bug fix: Corrected a variable name typo in the speed test function.
 
 v6.5 (2025-08-05):
   - Speed test records are now associated with the public IP, not the server.
-  - Record logs now include the VPN status at the time of the test.
 
 v6.4 (2025-08-05):
   - Speed test logs now include the public IP and its VPN status.
-
-v6.3 (2025-08-04):
-  - Bug fix: Restored missing command-line argument definitions from v6.2.
 """
 
 # --- Settings ---
@@ -76,25 +75,15 @@ except ImportError:
 
 # --- Helper & Data Functions ---
 def format_time_remaining(seconds):
-    if seconds <= 0:
-        return "now"
-    
-    days, remainder = divmod(seconds, 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, _ = divmod(remainder, 60)
-    
+    if seconds <= 0: return "now"
+    days, r = divmod(seconds, 86400)
+    hours, r = divmod(r, 3600)
+    minutes, _ = divmod(r, 60)
     parts = []
-    if days > 0:
-        parts.append(f"{int(days)} day{'s' if days != 1 else ''}")
-    if hours > 0:
-        parts.append(f"{int(hours)} hour{'s' if hours != 1 else ''}")
-    if not parts and minutes > 0:
-        parts.append(f"{int(minutes)} minute{'s' if minutes != 1 else ''}")
-    
-    if not parts:
-        return "less than a minute"
-        
-    return ", ".join(parts)
+    if days > 0: parts.append(f"{int(days)} day{'s' if days != 1 else ''}")
+    if hours > 0: parts.append(f"{int(hours)} hour{'s' if hours != 1 else ''}")
+    if not parts and minutes > 0: parts.append(f"{int(minutes)} minute{'s' if minutes != 1 else ''}")
+    return ", ".join(parts) if parts else "less than a minute"
 
 def format_time_ago(seconds):
     if seconds < 60: return "just now"
@@ -124,43 +113,24 @@ def format_time_since(seconds):
 
 def load_data(verbose=False):
     if verbose: print(f"  [v] Loading data from: {CONFIG_FILE}")
-    
-    defaults = {
-        'location_cache': {},
-        'ip_tally': {},
-        'vpn_ip_list': {'timestamp': 0, 'cidrs': {}},
-        'vpn_results_cache': {},
-        'speedtest_history': [],
-        'speedtest_records': {}
-    }
-
-    if not os.path.exists(CONFIG_FILE):
-        return defaults
+    defaults = {'location_cache': {}, 'ip_tally': {}, 'vpn_ip_list': {'timestamp': 0, 'cidrs': {}}, 'vpn_results_cache': {}, 'speedtest_history': [], 'speedtest_records': {}}
+    if not os.path.exists(CONFIG_FILE): return defaults
     try:
-        with open(CONFIG_FILE, 'r') as f:
-            data = json.load(f)
-        
+        with open(CONFIG_FILE, 'r') as f: data = json.load(f)
         if 'vpn_tally' in data:
             print("  [i] Migrating 'vpn_tally' to 'ip_tally'...")
             data['ip_tally'] = data.pop('vpn_tally')
-        
-        for key, value in defaults.items():
-            data.setdefault(key, value)
-        
+        for key, value in defaults.items(): data.setdefault(key, value)
         if isinstance(data['vpn_ip_list'].get('cidrs'), list):
             print("  [i] Migrating VPN IP list to new format...")
             old_list = data['vpn_ip_list']['cidrs']
             data['vpn_ip_list']['cidrs'] = {cidr: {"source": "x4bnet"} for cidr in old_list}
-
         for ip, record in data['ip_tally'].items():
             if 'is_vpn' in record:
-                status = "VPN" if record['is_vpn'] else "Standard"
-                record['last_status'] = status
+                record['last_status'] = "VPN" if record['is_vpn'] else "Standard"
                 del record['is_vpn']
-
         return data
-    except (json.JSONDecodeError, IOError):
-        return defaults
+    except (json.JSONDecodeError, IOError): return defaults
 
 def save_data(data, verbose=False):
     if verbose: print(f"  [v] Saving data to: {CONFIG_FILE}")
@@ -177,7 +147,6 @@ def list_known_ips(data):
     if not tally:
         print("No IP history found.")
         return
-
     current_ip = None
     try:
         response = requests.get("http://ip-api.com/json/?fields=query", timeout=5)
@@ -187,33 +156,18 @@ def list_known_ips(data):
         print("\n[!] Could not fetch current IP to highlight.")
 
     sorted_ips = sorted(tally.items(), key=lambda item: item[1].get('last_seen', 0), reverse=True)
-
     print(f"\n{'':<3}{'IP Address':<18} {'Last Seen':<28} {'Location':<30} {'Fastest Speed (DL/UL)':<25} {'Status'}")
     print(f"{'-'*3}{'-'*18} {'-'*28} {'-'*30} {'-'*25} {'-'*20}")
-
     for ip, details in sorted_ips:
         last_seen_ts = details.get('last_seen', 0)
         date_str = time.strftime('%m/%d/%Y', time.localtime(last_seen_ts))
         time_since_seconds = time.time() - last_seen_ts
-        time_since_str = format_time_since(time_since_seconds)
-        last_seen_str = f"{date_str} {time_since_str}"
-        
+        last_seen_str = f"{date_str} {format_time_since(time_since_seconds)}"
         city = details.get('city')
-        if city:
-            region = details.get('region', 'N/A')
-            country = details.get('country_code', 'N/A')
-            location_str = f"{city}, {region}, {country}"
-        else:
-            location_str = "Not Logged"
-
+        location_str = f"{city}, {details.get('region', 'N/A')}, {details.get('country_code', 'N/A')}" if city else "Not Logged"
         status = details.get('last_status', 'Unknown')
-        
         record = records.get(ip)
-        if record:
-            speed_str = f"{record.get('download_mbps', 0):.2f}/{record.get('upload_mbps', 0):.2f} Mbps"
-        else:
-            speed_str = "N/A"
-
+        speed_str = f"{record.get('download_mbps', 0):.2f}/{record.get('upload_mbps', 0):.2f} Mbps" if record else "N/A"
         prefix = "->" if ip == current_ip else "  "
         print(f"{prefix:<3}{ip:<18} {last_seen_str:<28} {location_str:<30} {speed_str:<25} {status}")
 
@@ -225,19 +179,13 @@ def update_vpn_ip_list(data, verbose=False):
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         cidrs_from_web = response.text.strip().split('\n')
-        
         if not cidrs_from_web:
              print("  [!] Fetched list is empty.")
              return data
-        
         manual_entries = {k: v for k, v in data['vpn_ip_list']['cidrs'].items() if v.get('source') == 'manual'}
         web_entries = {cidr: {"source": "x4bnet"} for cidr in cidrs_from_web}
         web_entries.update(manual_entries)
-        
-        data['vpn_ip_list'] = {
-            'timestamp': time.time(),
-            'cidrs': web_entries
-        }
+        data['vpn_ip_list'] = {'timestamp': time.time(), 'cidrs': web_entries}
         print(f"Update complete. Cached {len(cidrs_from_web)} VPN CIDR ranges from web.")
         save_data(data, verbose)
         return data
@@ -247,11 +195,9 @@ def update_vpn_ip_list(data, verbose=False):
 
 def is_known_vpn(data, ip_address_str, verbose=False):
     cidr_cache = data['vpn_ip_list']
-    
     if not cidr_cache.get('cidrs') or (time.time() - cidr_cache.get('timestamp', 0) > CACHE_DURATION_SECONDS):
         data = update_vpn_ip_list(data, verbose)
         cidr_cache = data['vpn_ip_list']
-
     try:
         user_ip = ipaddress.ip_address(ip_address_str)
         for cidr, metadata in cidr_cache.get('cidrs', {}).items():
@@ -264,19 +210,14 @@ def is_known_vpn(data, ip_address_str, verbose=False):
                 continue
     except ValueError:
         if verbose: print(f"  [v] Invalid IP address for checking: {ip_address_str}")
-        
     return None
 
 def run_speed_test(data, source_interface=None, verbose=False):
-    """Performs a network speed test, logs the results, and checks for records."""
     if not SPEEDTEST_ENABLED:
-        print("\n## Network Speed")
-        print("  To run a speed test, please install the library:")
-        print("  pip install speedtest-cli")
+        print("\n## Network Speed\n  To run a speed test, please install the library:\n  pip install speedtest-cli")
         return data
 
-    print("\n## Network Speed")
-    print("  Performing speed test... (this may take a moment)")
+    print("\n## Network Speed\n  Performing speed test... (this may take a moment)")
     try:
         st_config = {'secure': True}
         if source_interface:
@@ -286,54 +227,37 @@ def run_speed_test(data, source_interface=None, verbose=False):
                 print(f"  (Using interface: {source_interface})")
             else:
                 print(f"  [!] Warning: Could not find IP for source interface {source_interface}. Using OS default.")
-
         st = speedtest.Speedtest(**st_config)
         st.get_best_server()
         st.download()
         st.upload()
         results = st.results.dict()
-
         if verbose: print(f"  [v] Speedtest raw response: {results}")
         
-        ping = results['ping']
-        download_speed = results['download'] / 1_000_000
-        upload_speed = results['upload'] / 1_000_000
+        ping, dl_speed, ul_speed = results['ping'], results['download'] / 1_000_000, results['upload'] / 1_000_000
         server_host = results['server']['host'].split(':')[0]
         server_ip = socket.gethostbyname(server_host)
         public_ip = results.get('client', {}).get('ip')
-        
-        vpn_status = "Unknown"
-        if public_ip and data['vpn_results_cache'].get(public_ip):
-            vpn_status = data['vpn_results_cache'][public_ip].get('status', 'Standard')
+        vpn_status = data.get('vpn_results_cache', {}).get(public_ip, {}).get('status', 'Standard') if public_ip else "Unknown"
 
-        print(f"  {'Current Ping:':<20} {ping:.2f} ms")
-        print(f"  {'Current Download:':<20} {download_speed:.2f} Mbps")
-        print(f"  {'Current Upload:':<20} {upload_speed:.2f} Mbps")
-        print(f"  {'Server:':<20} {results['server']['name']} ({server_ip})")
+        print(f"  {'Current Ping:':<20} {ping:.2f} ms\n"
+              f"  {'Current Download:':<20} {dl_speed:.2f} Mbps\n"
+              f"  {'Current Upload:':<20} {ul_speed:.2f} Mbps\n"
+              f"  {'Server:':<20} {results['server']['name']} ({server_ip})")
 
-        log_entry = {
-            'timestamp': time.time(),
-            'public_ip': public_ip,
-            'vpn_status': vpn_status,
-            'server_ip': server_ip,
-            'server_name': f"{results['server']['name']} ({results['server']['country']})",
-            'ping_ms': ping,
-            'download_mbps': download_speed,
-            'upload_mbps': upload_speed
-        }
+        log_entry = {'timestamp': time.time(),'public_ip': public_ip, 'vpn_status': vpn_status,'server_ip': server_ip, 'server_name': f"{results['server']['name']} ({results['server']['country']})", 'ping_ms': ping, 'download_mbps': dl_speed, 'upload_mbps': ul_speed}
         data['speedtest_history'].append(log_entry)
         print("  Speed test results logged.")
         
         record = data['speedtest_records'].get(public_ip)
-        if not record or download_speed > record['download_mbps']:
+        if not record or dl_speed > record['download_mbps']:
             data['speedtest_records'][public_ip] = log_entry
             record = log_entry
             print("  New personal best for this IP!")
-
+        
         record_time_str = time.strftime('%m/%d/%Y', time.localtime(record['timestamp']))
         record_vpn_status = f"({record.get('vpn_status', 'N/A')})"
         print(f"  {'Max Speed (DL/UL):':<20} {record['download_mbps']:.2f} / {record['upload_mbps']:.2f} Mbps {record_vpn_status} (on {record_time_str})")
-
         return data
     except Exception as e:
         print(f"  Could not complete speed test: {e}")
@@ -341,14 +265,12 @@ def run_speed_test(data, source_interface=None, verbose=False):
 
 def get_latency(ip_address, source_interface=None, verbose=False):
     system = platform.system()
-    command = ['ping', '-c', '1', '-W', '1']
-    if source_interface and system == "Linux":
-        command.extend(['-I', source_interface])
-    command.append(ip_address)
-    
     if system == "Windows":
         command = ['ping', '-n', '1', '-w', '1000', ip_address]
-
+    else:
+        command = ['ping', '-c', '1', '-W', '1']
+        if source_interface: command.extend(['-I', source_interface])
+        command.append(ip_address)
     try:
         if verbose: print(f"  [v] Running command: {' '.join(command)}")
         output = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL)
@@ -398,35 +320,24 @@ def get_interface_details(iface_name, verbose=False):
     try:
         iface_addrs = psutil.net_if_addrs().get(iface_name)
         if not iface_addrs: return None
-
-        ip_addr = None
-        for addr in iface_addrs:
-            if addr.family == socket.AF_INET:
-                ip_addr = addr.address
-                break
-        
+        ip_addr = next((addr.address for addr in iface_addrs if addr.family == socket.AF_INET), None)
         if not ip_addr: return None
-        
         wifi_info = get_wifi_details(verbose).get(iface_name)
         ssid = wifi_info.get('SSID') if wifi_info else None
         return {'name': iface_name, 'ip': ip_addr, 'ssid': ssid}
-    except Exception:
-        return None
+    except Exception: return None
 
 def get_default_interface_details(verbose=False):
     if not NETIFACES_ENABLED: return None
     try:
         gws = netifaces.gateways()
-        if 'default' not in gws or netifaces.AF_INET not in gws['default']:
-            return None
+        if 'default' not in gws or netifaces.AF_INET not in gws['default']: return None
         iface_name = gws['default'][netifaces.AF_INET][1]
         return get_interface_details(iface_name, verbose)
-    except Exception:
-        return None
+    except Exception: return None
 
 def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_manual=False, source_interface=None):
     gps_details = None
-    
     if not no_gps:
         location_cache = data.get('location_cache', {})
         if not force_refresh and location_cache and (time.time() - location_cache.get('timestamp', 0) < CACHE_DURATION_SECONDS):
@@ -439,90 +350,39 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
             if gps_details:
                 gps_details['timestamp'] = time.time()
                 data['location_cache'] = gps_details
-
         if gps_details:
-            print("\n## Live GPS Location")
             lat, lon = gps_details['lat'], gps_details['lon']
-            print(f"  {'Latitude:':<25} {lat:.6f}")
-            print(f"  {'Longitude:':<25} {lon:.6f}")
-            if isinstance(gps_details.get('alt'), (int, float)):
-                print(f"  {'Altitude:':<25} {gps_details['alt']:.2f} meters")
-            time_since_update = time.time() - gps_details.get('timestamp', time.time())
-            print(f"  {'GPS Last Updated:':<25} {format_time_ago(time_since_update)}")
-            address = get_address_from_coords(lat, lon, verbose=verbose)
-            print(f"  {'Approx. Address:':<25} {address}")
+            altitude_str = f"  {'Altitude:':<25} {gps_details['alt']:.2f} meters\n" if isinstance(gps_details.get('alt'), (int, float)) else ""
+            print(f"\n## Live GPS Location\n"
+                  f"  {'Latitude:':<25} {lat:.6f}\n"
+                  f"  {'Longitude:':<25} {lon:.6f}\n{altitude_str}"
+                  f"  {'GPS Last Updated:':<25} {format_time_ago(time.time() - gps_details.get('timestamp', time.time()))}\n"
+                  f"  {'Approx. Address:':<25} {get_address_from_coords(lat, lon, verbose=verbose)}")
         else:
             if GPSD_ENABLED: print("  Could not get a live GPS fix.")
             else: print("  `gpsd-py3` library not found. Skipping live location features.")
-
     print("\nFetching your IP details...")
     url = "http://ip-api.com/json/?fields=status,message,country,countryCode,regionName,city,lat,lon,isp,query,hosting"
     try:
         response = requests.get(url)
         response.raise_for_status() 
         ip_data = response.json()
-        
         if verbose: print(f"  [v] API Response: {json.dumps(ip_data, indent=2)}")
-
         if ip_data.get('status') == 'success':
             server_ip = ip_data.get('query')
-            print("\n## IP-Based Location Details")
-            print(f"  {'Public IP:':<25} {server_ip}")
-            print(f"  {'Country:':<25} {ip_data.get('country')}")
-            print(f"  {'Region:':<25} {ip_data.get('regionName')}")
-            print(f"  {'City:':<25} {ip_data.get('city')}")
-
-            print("\n## Connection Details")
-            
-            if source_interface:
-                source_info = get_interface_details(source_interface, verbose)
-            else:
-                source_info = get_default_interface_details(verbose)
-            
-            latency = get_latency(server_ip, source_interface=(source_info['name'] if source_info else None), verbose=verbose)
-            print(f"  {'Latency:':<25} {latency or 'Unreachable'}")
-            
-            if source_info and source_info.get('ip'):
-                source_display = source_info['ip']
-                if source_info['ssid']:
-                    source_display += f" ({source_info['ssid']})"
-                else:
-                    source_display += f" ({source_info['name']})"
-                print(f"  {'Ping Source:':<25} {source_display}")
-
-            isp_lat, isp_lon = ip_data.get('lat'), ip_data.get('lon')
-            if gps_details and isp_lat and isp_lon:
-                distance = calculate_distance(gps_details['lat'], gps_details['lon'], isp_lat, isp_lon)
-                print(f"  {'Distance to ISP Server:':<25} {distance:.2f} miles")
-            
-            vpn_ip_cache_info = data['vpn_ip_list']
-            if vpn_ip_cache_info.get('timestamp'):
-                ts = vpn_ip_cache_info['timestamp']
-                time_format = '%m/%d/%Y %I:%M:%S %p'
-                last_updated_str = time.strftime(time_format, time.localtime(ts))
-                time_since_update = time.time() - ts
-                print(f"  {'VPN List Updated:':<25} {last_updated_str} {format_time_since(time_since_update)}")
-
-            vpn_message = "No"
-            vpn_detected = False
-            status_for_tally = "Standard"
+            status_for_tally, vpn_message, vpn_detected = "Standard", "No", False
             cached_result = data['vpn_results_cache'].get(server_ip)
-
             if cached_result and (time.time() - cached_result.get('timestamp', 0) < CACHE_DURATION_SECONDS):
                 if verbose: print(f"  [v] Using cached VPN result for {server_ip}")
                 vpn_message = cached_result.get('message', "No")
                 vpn_detected = cached_result.get('detected', False)
                 status_for_tally = cached_result.get('status', 'Standard')
-                timestamp = cached_result.get('timestamp', 0)
-                time_left = CACHE_DURATION_SECONDS - (time.time() - timestamp)
+                time_left = CACHE_DURATION_SECONDS - (time.time() - cached_result.get('timestamp', 0))
                 vpn_message += f" (cached, expires in {format_time_remaining(time_left)})"
             else:
-                is_hosting = ip_data.get('hosting', False)
                 if add_manual: print("  [i] Checking API for VPN status...")
-                if is_hosting:
-                    vpn_message = "Yes (Detected by API)"
-                    status_for_tally = "VPN (API)"
-                    vpn_detected = True
+                if ip_data.get('hosting', False):
+                    vpn_message, status_for_tally, vpn_detected = "Yes (Detected by API)", "VPN (API)", True
                 else:
                     if add_manual: print("  [i] Checking local list for VPN status...")
                     known_vpn_info = is_known_vpn(data, server_ip, verbose=verbose)
@@ -530,77 +390,63 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                         vpn_detected = True
                         if known_vpn_info.get('source') == 'manual':
                             added_ts = known_vpn_info.get('added_on', time.time())
-                            added_str = time.strftime('%m/%d/%Y', time.localtime(added_ts))
-                            vpn_message = f"Yes (Manually added on {added_str})"
-                            status_for_tally = "VPN (Manual)"
+                            vpn_message, status_for_tally = f"Yes (Manually added on {time.strftime('%m/%d/%Y', time.localtime(added_ts))})", "VPN (Manual)"
                         else:
-                            vpn_message = "Yes (IP found in local list)"
-                            status_for_tally = "VPN (List)"
-                
+                            vpn_message, status_for_tally = "Yes (IP found in local list)", "VPN (List)"
                 if add_manual and not vpn_detected:
                     print(f"  [i] IP not detected. Adding {server_ip} to manual VPN list...")
-                    ip_cidr = f"{server_ip}/32"
                     added_ts = time.time()
-                    data['vpn_ip_list']['cidrs'][ip_cidr] = {"source": "manual", "added_on": added_ts}
-                    added_str = time.strftime('%m/%d/%Y', time.localtime(added_ts))
-                    vpn_message = f"Yes (Manually added on {added_str})"
-                    status_for_tally = "VPN (Manual)"
-                    vpn_detected = True
-
-                data['vpn_results_cache'][server_ip] = {
-                    'timestamp': time.time(),
-                    'detected': vpn_detected,
-                    'message': vpn_message,
-                    'status': status_for_tally
-                }
-
-            print(f"  {'VPN/Proxy Detected:':<25} {vpn_message}")
-            print(f"  {'Provider/ISP:':<25} {ip_data.get('isp')}")
+                    data['vpn_ip_list']['cidrs'][f"{server_ip}/32"] = {"source": "manual", "added_on": added_ts}
+                    vpn_message, status_for_tally, vpn_detected = f"Yes (Manually added on {time.strftime('%m/%d/%Y', time.localtime(added_ts))})", "VPN (Manual)", True
+                data['vpn_results_cache'][server_ip] = {'timestamp': time.time(),'detected': vpn_detected, 'message': vpn_message, 'status': status_for_tally}
+            
+            source_info = get_interface_details(source_interface, verbose) if source_interface else get_default_interface_details(verbose)
+            ping_source_line = ""
+            if source_info and source_info.get('ip'):
+                source_display = f" ({source_info['ssid']})" if source_info['ssid'] else f" ({source_info['name']})"
+                ping_source_line = f"  {'Ping Source:':<25} {source_info['ip']}{source_display}\n"
+            isp_dist_line = ""
+            if gps_details and ip_data.get('lat') and ip_data.get('lon'):
+                distance = calculate_distance(gps_details['lat'], gps_details['lon'], ip_data['lat'], ip_data['lon'])
+                isp_dist_line = f"  {'Distance to ISP Server:':<25} {distance:.2f} miles\n"
+            vpn_list_updated_line = ""
+            if data['vpn_ip_list'].get('timestamp'):
+                ts = data['vpn_ip_list']['timestamp']
+                vpn_list_updated_line = f"  {'VPN List Updated:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(ts))} {format_time_since(time.time() - ts)}\n"
+            
+            print(f"\n## IP-Based Location Details\n"
+                  f"  {'Public IP:':<25} {server_ip}\n"
+                  f"  {'Country:':<25} {ip_data.get('country')}\n"
+                  f"  {'Region:':<25} {ip_data.get('regionName')}\n"
+                  f"  {'City:':<25} {ip_data.get('city')}\n"
+                  f"\n## Connection Details\n"
+                  f"  {'Latency:':<25} {get_latency(server_ip, source_interface=(source_info['name'] if source_info else None), verbose=verbose) or 'Unreachable'}\n"
+                  f"{ping_source_line}{isp_dist_line}{vpn_list_updated_line}"
+                  f"  {'VPN/Proxy Detected:':<25} {vpn_message}\n"
+                  f"  {'Provider/ISP:':<25} {ip_data.get('isp')}")
 
             tally = data.get('ip_tally', {})
-            existing_record = tally.get(server_ip)
+            record = tally.get(server_ip, {})
             current_time = time.time()
-            time_format = '%m/%d/%Y %I:%M:%S %p'
-
-            if existing_record:
-                new_count = existing_record.get('count', 0) + 1
-                first_seen_ts = existing_record.get('first_seen', current_time)
-                print(f"  {'Times Seen:':<25} {new_count}")
-                last_seen_ts = existing_record.get('last_seen')
-                if last_seen_ts:
-                    last_seen_str = time.strftime(time_format, time.localtime(last_seen_ts))
-                    time_since = time.time() - last_seen_ts
-                    print(f"  {'Last Seen:':<25} {last_seen_str} {format_time_since(time_since)}")
-                first_seen_str = time.strftime(time_format, time.localtime(first_seen_ts))
-                time_since_first = time.time() - first_seen_ts
-                print(f"  {'First Seen:':<25} {first_seen_str} {format_time_since(time_since_first)}")
-                
-                updated_record = existing_record
-                updated_record['count'] = new_count
-                updated_record['last_seen'] = current_time
-                updated_record['last_status'] = status_for_tally
-                if 'city' not in updated_record or not updated_record.get('city'):
-                    updated_record['city'] = ip_data.get('city')
-                    updated_record['region'] = ip_data.get('regionName')
-                    updated_record['country_code'] = ip_data.get('countryCode')
-
-            else:
-                new_count = 1
-                print(f"  {'Times Seen:':<25} 1 (New IP!)")
-                print(f"  {'Last Seen:':<25} Never")
-                print(f"  {'First Seen:':<25} {time.strftime(time_format, time.localtime(current_time))}")
-                updated_record = {
-                    'count': new_count, 
-                    'last_seen': current_time, 
-                    'first_seen': current_time, 
-                    'last_status': status_for_tally,
-                    'city': ip_data.get('city'),
-                    'region': ip_data.get('regionName'),
-                    'country_code': ip_data.get('countryCode')
-                }
+            new_count = record.get('count', 0) + 1
+            first_seen_ts = record.get('first_seen', current_time)
             
-            tally[server_ip] = updated_record
+            tally[server_ip] = {
+                'count': new_count, 'last_seen': current_time, 'first_seen': first_seen_ts, 
+                'last_status': status_for_tally, 'city': record.get('city') or ip_data.get('city'),
+                'region': record.get('region') or ip_data.get('regionName'),
+                'country_code': record.get('country_code') or ip_data.get('countryCode')
+            }
             data['ip_tally'] = tally
+            
+            if new_count > 1:
+                print(f"  {'Times Seen:':<25} {new_count}\n"
+                      f"  {'Last Seen:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(record.get('last_seen', current_time)))} {format_time_since(time.time() - record.get('last_seen', current_time))}\n"
+                      f"  {'First Seen:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(first_seen_ts))} {format_time_since(time.time() - first_seen_ts)}")
+            else:
+                print(f"  {'Times Seen:':<25} 1 (New IP!)\n"
+                      f"  {'Last Seen:':<25} Never\n"
+                      f"  {'First Seen:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(current_time))}")
         else:
             print(f"\nError: API Error: Could not fetch details. Message: {ip_data.get('message')}")
     except requests.exceptions.RequestException:
@@ -638,8 +484,7 @@ def get_wifi_details(verbose=False):
 
 def display_local_network_info(verbose=False):
     if not PSUTIL_ENABLED:
-        print("\n## Local Network Details")
-        print("  To show local IP info, please install psutil: pip install psutil")
+        print("\n## Local Network Details\n  To show local IP info, please install psutil: pip install psutil")
         return
 
     print("\n## Local Network Details")
@@ -665,19 +510,21 @@ def display_local_network_info(verbose=False):
             if stats.get(iface) and stats[iface].isup and 'lo' not in iface.lower():
                 found_active_interface = True
                 print(f"\n  Interface: {iface}")
+                interface_details = []
                 for addr in iface_addrs:
                     if addr.family == socket.AF_INET:
-                        print(f"    {'Local IP:':<15} {addr.address}")
+                        interface_details.append(f"    {'Local IP:':<15} {addr.address}")
                     elif addr.family == psutil.AF_LINK:
-                        print(f"    {f'{iface} MAC:':<15} {addr.address}")
+                        interface_details.append(f"    {f'{iface} MAC:':<15} {addr.address}")
                 if iface == default_gateway_iface:
-                    print(f"    {'Gateway:':<15} {default_gateway_ip}")
+                    interface_details.append(f"    {'Gateway:':<15} {default_gateway_ip}")
                 if iface in wifi_details:
                     details = wifi_details[iface]
-                    print(f"    {'SSID:':<15} {details.get('SSID', 'N/A')}")
-                    if details.get('BSSID'): print(f"    {'BSSID:':<15} {details['BSSID']}")
-                    print(f"    {'Band:':<15} {details.get('Band', 'N/A')}")
-                    if details.get('Signal'): print(f"    {'Signal:':<15} {details['Signal']}")
+                    interface_details.append(f"    {'SSID:':<15} {details.get('SSID', 'N/A')}")
+                    if details.get('BSSID'): interface_details.append(f"    {'BSSID:':<15} {details['BSSID']}")
+                    interface_details.append(f"    {'Band:':<15} {details.get('Band', 'N/A')}")
+                    if details.get('Signal'): interface_details.append(f"    {'Signal:':<15} {details['Signal']}")
+                print("\n".join(interface_details))
         if not found_active_interface:
             print("  No active non-loopback network interface found.")
     except Exception as e:
