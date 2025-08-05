@@ -13,21 +13,22 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "6.3"
+VERSION = "6.6"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
 
+v6.6 (2025-08-05):
+  - Bug fix: Corrected a variable name typo in the speed test function.
+
+v6.5 (2025-08-05):
+  - Speed test records are now associated with the public IP, not the server.
+  - Record logs now include the VPN status at the time of the test.
+
+v6.4 (2025-08-05):
+  - Speed test logs now include the public IP and its VPN status.
+
 v6.3 (2025-08-04):
   - Bug fix: Restored missing command-line argument definitions from v6.2.
-
-v6.2 (2025-08-04):
-  - Added --source flag to specify the outbound network interface.
-
-v6.1 (2025-08-04):
-  - Added 'Ping Source' to show which local IP/SSID was used for the test.
-
-v6.0 (2025-08-04):
-  - Bug fix: Corrected IndentationError from missing code block in v5.9.
 """
 
 # --- Settings ---
@@ -172,6 +173,7 @@ def save_data(data, verbose=False):
 # --- Core Functionality ---
 def list_known_ips(data):
     tally = data.get('ip_tally', {})
+    records = data.get('speedtest_records', {})
     if not tally:
         print("No IP history found.")
         return
@@ -186,8 +188,8 @@ def list_known_ips(data):
 
     sorted_ips = sorted(tally.items(), key=lambda item: item[1].get('last_seen', 0), reverse=True)
 
-    print(f"\n{'':<3}{'IP Address':<18} {'Last Seen':<28} {'Location':<30} {'Status'}")
-    print(f"{'-'*3}{'-'*18} {'-'*28} {'-'*30} {'-'*20}")
+    print(f"\n{'':<3}{'IP Address':<18} {'Last Seen':<28} {'Location':<30} {'Fastest Speed (DL/UL)':<25} {'Status'}")
+    print(f"{'-'*3}{'-'*18} {'-'*28} {'-'*30} {'-'*25} {'-'*20}")
 
     for ip, details in sorted_ips:
         last_seen_ts = details.get('last_seen', 0)
@@ -206,8 +208,14 @@ def list_known_ips(data):
 
         status = details.get('last_status', 'Unknown')
         
+        record = records.get(ip)
+        if record:
+            speed_str = f"{record.get('download_mbps', 0):.2f}/{record.get('upload_mbps', 0):.2f} Mbps"
+        else:
+            speed_str = "N/A"
+
         prefix = "->" if ip == current_ip else "  "
-        print(f"{prefix:<3}{ip:<18} {last_seen_str:<28} {location_str:<30} {status}")
+        print(f"{prefix:<3}{ip:<18} {last_seen_str:<28} {location_str:<30} {speed_str:<25} {status}")
 
 def update_vpn_ip_list(data, verbose=False):
     print("Updating known VPN IP list...")
@@ -260,6 +268,7 @@ def is_known_vpn(data, ip_address_str, verbose=False):
     return None
 
 def run_speed_test(data, source_interface=None, verbose=False):
+    """Performs a network speed test, logs the results, and checks for records."""
     if not SPEEDTEST_ENABLED:
         print("\n## Network Speed")
         print("  To run a speed test, please install the library:")
@@ -291,31 +300,39 @@ def run_speed_test(data, source_interface=None, verbose=False):
         upload_speed = results['upload'] / 1_000_000
         server_host = results['server']['host'].split(':')[0]
         server_ip = socket.gethostbyname(server_host)
+        public_ip = results.get('client', {}).get('ip')
         
+        vpn_status = "Unknown"
+        if public_ip and data['vpn_results_cache'].get(public_ip):
+            vpn_status = data['vpn_results_cache'][public_ip].get('status', 'Standard')
+
         print(f"  {'Current Ping:':<20} {ping:.2f} ms")
         print(f"  {'Current Download:':<20} {download_speed:.2f} Mbps")
         print(f"  {'Current Upload:':<20} {upload_speed:.2f} Mbps")
         print(f"  {'Server:':<20} {results['server']['name']} ({server_ip})")
 
-        current_result = {
+        log_entry = {
             'timestamp': time.time(),
+            'public_ip': public_ip,
+            'vpn_status': vpn_status,
             'server_ip': server_ip,
             'server_name': f"{results['server']['name']} ({results['server']['country']})",
             'ping_ms': ping,
             'download_mbps': download_speed,
             'upload_mbps': upload_speed
         }
-        data['speedtest_history'].append(current_result)
+        data['speedtest_history'].append(log_entry)
         print("  Speed test results logged.")
         
-        record = data['speedtest_records'].get(server_ip)
+        record = data['speedtest_records'].get(public_ip)
         if not record or download_speed > record['download_mbps']:
-            data['speedtest_records'][server_ip] = current_result
-            record = current_result
-            print("  New personal best for this server!")
+            data['speedtest_records'][public_ip] = log_entry
+            record = log_entry
+            print("  New personal best for this IP!")
 
         record_time_str = time.strftime('%m/%d/%Y', time.localtime(record['timestamp']))
-        print(f"  {'Max Speed (DL/UL):':<20} {record['download_mbps']:.2f} / {record['upload_mbps']:.2f} Mbps (on {record_time_str})")
+        record_vpn_status = f"({record.get('vpn_status', 'N/A')})"
+        print(f"  {'Max Speed (DL/UL):':<20} {record['download_mbps']:.2f} / {record['upload_mbps']:.2f} Mbps {record_vpn_status} (on {record_time_str})")
 
         return data
     except Exception as e:
