@@ -13,22 +13,21 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "6.1"
+VERSION = "6.3"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
 
+v6.3 (2025-08-04):
+  - Bug fix: Restored missing command-line argument definitions from v6.2.
+
+v6.2 (2025-08-04):
+  - Added --source flag to specify the outbound network interface.
+
 v6.1 (2025-08-04):
   - Added 'Ping Source' to show which local IP/SSID was used for the test.
-  - Ping command now explicitly uses the default outbound interface.
 
 v6.0 (2025-08-04):
   - Bug fix: Corrected IndentationError from missing code block in v5.9.
-
-v5.9 (2025-08-04):
-  - Bug fix: Prevented cached VPN status from being overwritten incorrectly.
-
-v5.8 (2025-08-03):
-  - Fixed a bug where location data was not being saved for existing IPs.
 """
 
 # --- Settings ---
@@ -260,7 +259,7 @@ def is_known_vpn(data, ip_address_str, verbose=False):
         
     return None
 
-def run_speed_test(data, verbose=False):
+def run_speed_test(data, source_interface=None, verbose=False):
     if not SPEEDTEST_ENABLED:
         print("\n## Network Speed")
         print("  To run a speed test, please install the library:")
@@ -270,7 +269,16 @@ def run_speed_test(data, verbose=False):
     print("\n## Network Speed")
     print("  Performing speed test... (this may take a moment)")
     try:
-        st = speedtest.Speedtest(secure=True)
+        st_config = {'secure': True}
+        if source_interface:
+            source_ip = get_interface_details(source_interface, verbose).get('ip')
+            if source_ip:
+                st_config['source_address'] = source_ip
+                print(f"  (Using interface: {source_interface})")
+            else:
+                print(f"  [!] Warning: Could not find IP for source interface {source_interface}. Using OS default.")
+
+        st = speedtest.Speedtest(**st_config)
         st.get_best_server()
         st.download()
         st.upload()
@@ -314,15 +322,13 @@ def run_speed_test(data, verbose=False):
         print(f"  Could not complete speed test: {e}")
         return data
 
-def get_latency(ip_address, source_ip=None, verbose=False):
-    """Pings an IP address once to get the latency."""
+def get_latency(ip_address, source_interface=None, verbose=False):
     system = platform.system()
     command = ['ping', '-c', '1', '-W', '1']
-    if source_ip and system == "Linux":
-        command.extend(['-I', source_ip])
+    if source_interface and system == "Linux":
+        command.extend(['-I', source_interface])
     command.append(ip_address)
     
-    # Windows uses different flags
     if system == "Windows":
         command = ['ping', '-n', '1', '-w', '1000', ip_address]
 
@@ -370,20 +376,11 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-def get_default_interface_details(verbose=False):
-    """Determines the default outbound interface and its details."""
-    if not NETIFACES_ENABLED or not PSUTIL_ENABLED:
-        return None
-        
+def get_interface_details(iface_name, verbose=False):
+    if not PSUTIL_ENABLED: return None
     try:
-        gws = netifaces.gateways()
-        if 'default' not in gws or netifaces.AF_INET not in gws['default']:
-            return None
-        
-        iface_name = gws['default'][netifaces.AF_INET][1]
         iface_addrs = psutil.net_if_addrs().get(iface_name)
-        if not iface_addrs:
-            return None
+        if not iface_addrs: return None
 
         ip_addr = None
         for addr in iface_addrs:
@@ -391,17 +388,26 @@ def get_default_interface_details(verbose=False):
                 ip_addr = addr.address
                 break
         
-        if not ip_addr:
-            return None
+        if not ip_addr: return None
         
         wifi_info = get_wifi_details(verbose).get(iface_name)
         ssid = wifi_info.get('SSID') if wifi_info else None
-
         return {'name': iface_name, 'ip': ip_addr, 'ssid': ssid}
     except Exception:
         return None
 
-def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_manual=False):
+def get_default_interface_details(verbose=False):
+    if not NETIFACES_ENABLED: return None
+    try:
+        gws = netifaces.gateways()
+        if 'default' not in gws or netifaces.AF_INET not in gws['default']:
+            return None
+        iface_name = gws['default'][netifaces.AF_INET][1]
+        return get_interface_details(iface_name, verbose)
+    except Exception:
+        return None
+
+def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_manual=False, source_interface=None):
     gps_details = None
     
     if not no_gps:
@@ -450,18 +456,21 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
             print(f"  {'City:':<25} {ip_data.get('city')}")
 
             print("\n## Connection Details")
-            source_interface = get_default_interface_details(verbose)
-            source_ip = source_interface.get('ip') if source_interface else None
-            
-            latency = get_latency(server_ip, source_ip=source_ip, verbose=verbose)
-            print(f"  {'Latency:':<25} {latency or 'Unreachable'}")
             
             if source_interface:
-                source_display = source_interface['ip']
-                if source_interface['ssid']:
-                    source_display += f" ({source_interface['ssid']})"
+                source_info = get_interface_details(source_interface, verbose)
+            else:
+                source_info = get_default_interface_details(verbose)
+            
+            latency = get_latency(server_ip, source_interface=(source_info['name'] if source_info else None), verbose=verbose)
+            print(f"  {'Latency:':<25} {latency or 'Unreachable'}")
+            
+            if source_info and source_info.get('ip'):
+                source_display = source_info['ip']
+                if source_info['ssid']:
+                    source_display += f" ({source_info['ssid']})"
                 else:
-                    source_display += f" ({source_interface['name']})"
+                    source_display += f" ({source_info['name']})"
                 print(f"  {'Ping Source:':<25} {source_display}")
 
             isp_lat, isp_lon = ip_data.get('lat'), ip_data.get('lon')
@@ -670,6 +679,7 @@ if __name__ == "__main__":
     parser.add_argument('-G', '--no-gps', action='store_true', help='Skip all GPS-related functions.')
     parser.add_argument('-s', '--speedtest', action='store_true', help='Perform a network speed test.')
     parser.add_argument('-l', '--list', action='store_true', help='List all known IPs from history.')
+    parser.add_argument('--source', type=str, help='Specify the source interface for outbound tests (e.g., wlan0).')
     
     if ARGCOMPLETE_ENABLED: argcomplete.autocomplete(parser)
     args = parser.parse_args()
@@ -692,11 +702,11 @@ if __name__ == "__main__":
         exit()
 
     if args.speedtest and not any([args.force_refresh, args.no_gps, args.add]):
-        data = run_speed_test(data, verbose=args.verbose)
+        data = run_speed_test(data, source_interface=args.source, verbose=args.verbose)
     else:
-        data = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps, add_manual=args.add)
+        data = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps, add_manual=args.add, source_interface=args.source)
         display_local_network_info(verbose=args.verbose)
         if args.speedtest:
-             data = run_speed_test(data, verbose=args.verbose)
+             data = run_speed_test(data, source_interface=args.source, verbose=args.verbose)
     
     save_data(data, args.verbose)
