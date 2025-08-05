@@ -1,4 +1,3 @@
-cat > README.md << EOF
 # ,where
 
 **Version:** 6.0
@@ -28,29 +27,38 @@ Save the latest version of the script to a file named `,where`.
 Save the following content into a file named `requirements.txt` in the same directory as the script.
 
 **`requirements.txt`**
-`requests
+```
+requests
 geopy
 gpsd-py3
 psutil
 netifaces
 argcomplete
 speedtest-cli
-`
+```
 
 Now, install these dependencies using pip:
-`pip install -r requirements.txt`
+```bash
+pip install -r requirements.txt
+```
 
 ### 4. Make the Script Executable
-`chmod +x ,where`
+```bash
+chmod +x ,where
+```
 
 ### 5. Add to Your PATH (Recommended)
 For easy access from any directory, move the script to a location in your system's PATH.
-`sudo mv ,where /usr/local/bin/`
+```bash
+sudo mv ,where /usr/local/bin/
+```
 
 ## Usage
 
 Simply run the script by name:
-`,where`
+```bash
+,where
+```
 
 ### Options
 
@@ -69,7 +77,7 @@ Simply run the script by name:
 
 ## Example Output
 
-`
+```
 ,where v6.0
 Using cached GPS location.
 
@@ -108,8 +116,7 @@ Fetching your IP details...
     BSSID:            FF:EE:DD:CC:BB:AA
     Band:             5 GHz
     Signal:           -45.00 dBm
-`
+```
 
 ## Configuration
 The script stores all of its data in a single JSON file located at `~/.where.json`. This file contains the GPS cache, IP history, VPN lists, and speed test records. You can safely delete this file at any time to reset the script's memory, or use the `--clear-cache` flag.
-EOF
