@@ -13,20 +13,21 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "7.1"
+VERSION = "7.2"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v7.2 (2025-08-05):
+  - Bug fix: The --add flag now correctly bypasses the results cache.
 
 v7.1 (2025-08-05):
   - Bug fix: Corrected TypeError in --list when a speed test record is missing a source IP.
 
 v7.0 (2025-08-05):
   - Refactored logic to use a single source for the public IP address.
-  - Fixes a bug where speed test results were not correctly displayed in the list.
 
 v6.9 (2025-08-05):
   - Added 'Source IP' column to the --list output for speed test records.
-  - Speed test records now log the local source IP used for the test.
 """
 
 # --- Settings ---
@@ -386,7 +387,7 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
             server_ip = ip_data.get('query')
             vpn_message, vpn_detected = "No", False
             cached_result = data['vpn_results_cache'].get(server_ip)
-            if cached_result and (time.time() - cached_result.get('timestamp', 0) < CACHE_DURATION_SECONDS):
+            if cached_result and not add_manual and (time.time() - cached_result.get('timestamp', 0) < CACHE_DURATION_SECONDS):
                 if verbose: print(f"  [v] Using cached VPN result for {server_ip}")
                 vpn_message, vpn_detected, status_for_tally = cached_result.get('message', "No"), cached_result.get('detected', False), cached_result.get('status', 'Standard')
                 time_left = CACHE_DURATION_SECONDS - (time.time() - cached_result.get('timestamp', 0))
