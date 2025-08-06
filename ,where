@@ -13,9 +13,13 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "6.7"
+VERSION = "6.8"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v6.8 (2025-08-06):
+  - Local network details now only show the active outbound interface by default.
+  - Added -a/--all flag to show all active local interfaces.
 
 v6.7 (2025-08-05):
   - Optimized script for brevity without removing functionality.
@@ -25,9 +29,6 @@ v6.6 (2025-08-05):
 
 v6.5 (2025-08-05):
   - Speed test records are now associated with the public IP, not the server.
-
-v6.4 (2025-08-05):
-  - Speed test logs now include the public IP and its VPN status.
 """
 
 # --- Settings ---
@@ -336,7 +337,7 @@ def get_default_interface_details(verbose=False):
         return get_interface_details(iface_name, verbose)
     except Exception: return None
 
-def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_manual=False, source_interface=None):
+def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_manual=False, source_interface=None, show_all_interfaces=False):
     gps_details = None
     if not no_gps:
         location_cache = data.get('location_cache', {})
@@ -447,6 +448,7 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                 print(f"  {'Times Seen:':<25} 1 (New IP!)\n"
                       f"  {'Last Seen:':<25} Never\n"
                       f"  {'First Seen:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(current_time))}")
+            display_local_network_info(specific_interface_info=source_info, show_all=show_all_interfaces, verbose=verbose)
         else:
             print(f"\nError: API Error: Could not fetch details. Message: {ip_data.get('message')}")
     except requests.exceptions.RequestException:
@@ -482,7 +484,7 @@ def get_wifi_details(verbose=False):
     except (FileNotFoundError, subprocess.CalledProcessError): pass
     return wifi_data
 
-def display_local_network_info(verbose=False):
+def display_local_network_info(specific_interface_info=None, show_all=False, verbose=False):
     if not PSUTIL_ENABLED:
         print("\n## Local Network Details\n  To show local IP info, please install psutil: pip install psutil")
         return
@@ -506,27 +508,36 @@ def display_local_network_info(verbose=False):
             print(f"  [v] psutil stats: {stats}")
         
         found_active_interface = False
-        for iface, iface_addrs in addrs.items():
-            if stats.get(iface) and stats[iface].isup and 'lo' not in iface.lower():
-                found_active_interface = True
-                print(f"\n  Interface: {iface}")
-                interface_details = []
-                for addr in iface_addrs:
-                    if addr.family == socket.AF_INET:
-                        interface_details.append(f"    {'Local IP:':<15} {addr.address}")
-                    elif addr.family == psutil.AF_LINK:
-                        interface_details.append(f"    {f'{iface} MAC:':<15} {addr.address}")
-                if iface == default_gateway_iface:
-                    interface_details.append(f"    {'Gateway:':<15} {default_gateway_ip}")
-                if iface in wifi_details:
-                    details = wifi_details[iface]
-                    interface_details.append(f"    {'SSID:':<15} {details.get('SSID', 'N/A')}")
-                    if details.get('BSSID'): interface_details.append(f"    {'BSSID:':<15} {details['BSSID']}")
-                    interface_details.append(f"    {'Band:':<15} {details.get('Band', 'N/A')}")
-                    if details.get('Signal'): interface_details.append(f"    {'Signal:':<15} {details['Signal']}")
-                print("\n".join(interface_details))
+        interfaces_to_show = addrs.keys() if show_all or not specific_interface_info else [specific_interface_info['name']]
+
+        for iface in interfaces_to_show:
+            iface_addrs = addrs.get(iface)
+            if not (iface_addrs and stats.get(iface) and stats[iface].isup and 'lo' not in iface.lower()):
+                continue
+
+            found_active_interface = True
+            print(f"\n  Interface: {iface}")
+            details_to_print = []
+            for addr in iface_addrs:
+                if addr.family == socket.AF_INET:
+                    details_to_print.append(f"    {'Local IP:':<15} {addr.address}")
+                elif addr.family == psutil.AF_LINK:
+                    details_to_print.append(f"    {f'{iface} MAC:':<15} {addr.address}")
+            if iface == default_gateway_iface:
+                details_to_print.append(f"    {'Gateway:':<15} {default_gateway_ip}")
+            if iface in wifi_details:
+                details = wifi_details[iface]
+                details_to_print.append(f"    {'SSID:':<15} {details.get('SSID', 'N/A')}")
+                if details.get('BSSID'): details_to_print.append(f"    {'BSSID:':<15} {details['BSSID']}")
+                details_to_print.append(f"    {'Band:':<15} {details.get('Band', 'N/A')}")
+                if details.get('Signal'): details_to_print.append(f"    {'Signal:':<15} {details['Signal']}")
+            print("\n".join(details_to_print))
+
         if not found_active_interface:
-            print("  No active non-loopback network interface found.")
+            if not show_all and specific_interface_info:
+                print(f"  Specified interface '{specific_interface_info['name']}' not found or is not active.")
+            else:
+                print("  No active non-loopback network interface found.")
     except Exception as e:
         print(f"  Could not retrieve local interface details: {e}")
 
@@ -544,6 +555,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--speedtest', action='store_true', help='Perform a network speed test.')
     parser.add_argument('-l', '--list', action='store_true', help='List all known IPs from history.')
     parser.add_argument('--source', type=str, help='Specify the source interface for outbound tests (e.g., wlan0).')
+    parser.add_argument('-a', '--all', action='store_true', help='Show details for all local network interfaces.')
     
     if ARGCOMPLETE_ENABLED: argcomplete.autocomplete(parser)
     args = parser.parse_args()
@@ -565,11 +577,10 @@ if __name__ == "__main__":
         data = update_vpn_ip_list(data, verbose=args.verbose)
         exit()
 
-    if args.speedtest and not any([args.force_refresh, args.no_gps, args.add]):
+    if args.speedtest and not any([args.force_refresh, args.no_gps, args.add, args.all]):
         data = run_speed_test(data, source_interface=args.source, verbose=args.verbose)
     else:
-        data = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps, add_manual=args.add, source_interface=args.source)
-        display_local_network_info(verbose=args.verbose)
+        data = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps, add_manual=args.add, source_interface=args.source, show_all_interfaces=args.all)
         if args.speedtest:
              data = run_speed_test(data, source_interface=args.source, verbose=args.verbose)
     
