@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "7.4"
+VERSION = "7.5"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v7.5 (2025-08-05):
+  - The --fastest flag now implies --list.
 
 v7.4 (2025-08-05):
   - Changed --fastest flag to sort by download speed instead of upload.
@@ -25,9 +28,6 @@ v7.3 (2025-08-05):
 
 v7.2 (2025-08-05):
   - Bug fix: The --add flag now correctly bypasses the results cache.
-
-v7.1 (2025-08-05):
-  - Bug fix: Corrected TypeError in --list when a speed test record is missing a source IP.
 """
 
 # --- Settings ---
@@ -589,7 +589,7 @@ if __name__ == "__main__":
     parser.add_argument('-l', '--list', action='store_true', help='List all known IPs from history.')
     parser.add_argument('--source', type=str, help='Specify the source interface for outbound tests (e.g., wlan0).')
     parser.add_argument('-a', '--all', action='store_true', help='Show details for all local network interfaces.')
-    parser.add_argument('--fastest', action='store_true', help='Sort the --list output by fastest upload speed.')
+    parser.add_argument('--fastest', action='store_true', help='List known IPs sorted by fastest download speed (implies --list).')
     
     if ARGCOMPLETE_ENABLED: argcomplete.autocomplete(parser)
     args = parser.parse_args()
@@ -603,7 +603,7 @@ if __name__ == "__main__":
 
     data = load_data(args.verbose)
 
-    if args.list:
+    if args.list or args.fastest:
         list_known_ips(data, sort_by_speed=args.fastest)
         exit()
 
