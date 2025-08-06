@@ -13,9 +13,13 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "6.8"
+VERSION = "6.9"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v6.9 (2025-08-05):
+  - Added 'Source IP' column to the --list output for speed test records.
+  - Speed test records now log the local source IP used for the test.
 
 v6.8 (2025-08-06):
   - Local network details now only show the active outbound interface by default.
@@ -26,9 +30,6 @@ v6.7 (2025-08-05):
 
 v6.6 (2025-08-05):
   - Bug fix: Corrected a variable name typo in the speed test function.
-
-v6.5 (2025-08-05):
-  - Speed test records are now associated with the public IP, not the server.
 """
 
 # --- Settings ---
@@ -76,15 +77,25 @@ except ImportError:
 
 # --- Helper & Data Functions ---
 def format_time_remaining(seconds):
-    if seconds <= 0: return "now"
-    days, r = divmod(seconds, 86400)
-    hours, r = divmod(r, 3600)
-    minutes, _ = divmod(r, 60)
+    if seconds <= 0:
+        return "now"
+    
+    days, remainder = divmod(seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _ = divmod(remainder, 60)
+    
     parts = []
-    if days > 0: parts.append(f"{int(days)} day{'s' if days != 1 else ''}")
-    if hours > 0: parts.append(f"{int(hours)} hour{'s' if hours != 1 else ''}")
-    if not parts and minutes > 0: parts.append(f"{int(minutes)} minute{'s' if minutes != 1 else ''}")
-    return ", ".join(parts) if parts else "less than a minute"
+    if days > 0:
+        parts.append(f"{int(days)} day{'s' if days != 1 else ''}")
+    if hours > 0:
+        parts.append(f"{int(hours)} hour{'s' if hours != 1 else ''}")
+    if not parts and minutes > 0:
+        parts.append(f"{int(minutes)} minute{'s' if minutes != 1 else ''}")
+    
+    if not parts:
+        return "less than a minute"
+        
+    return ", ".join(parts)
 
 def format_time_ago(seconds):
     if seconds < 60: return "just now"
@@ -114,24 +125,43 @@ def format_time_since(seconds):
 
 def load_data(verbose=False):
     if verbose: print(f"  [v] Loading data from: {CONFIG_FILE}")
-    defaults = {'location_cache': {}, 'ip_tally': {}, 'vpn_ip_list': {'timestamp': 0, 'cidrs': {}}, 'vpn_results_cache': {}, 'speedtest_history': [], 'speedtest_records': {}}
-    if not os.path.exists(CONFIG_FILE): return defaults
+    
+    defaults = {
+        'location_cache': {},
+        'ip_tally': {},
+        'vpn_ip_list': {'timestamp': 0, 'cidrs': {}},
+        'vpn_results_cache': {},
+        'speedtest_history': [],
+        'speedtest_records': {}
+    }
+
+    if not os.path.exists(CONFIG_FILE):
+        return defaults
     try:
-        with open(CONFIG_FILE, 'r') as f: data = json.load(f)
+        with open(CONFIG_FILE, 'r') as f:
+            data = json.load(f)
+        
         if 'vpn_tally' in data:
             print("  [i] Migrating 'vpn_tally' to 'ip_tally'...")
             data['ip_tally'] = data.pop('vpn_tally')
-        for key, value in defaults.items(): data.setdefault(key, value)
+        
+        for key, value in defaults.items():
+            data.setdefault(key, value)
+        
         if isinstance(data['vpn_ip_list'].get('cidrs'), list):
             print("  [i] Migrating VPN IP list to new format...")
             old_list = data['vpn_ip_list']['cidrs']
             data['vpn_ip_list']['cidrs'] = {cidr: {"source": "x4bnet"} for cidr in old_list}
+
         for ip, record in data['ip_tally'].items():
             if 'is_vpn' in record:
-                record['last_status'] = "VPN" if record['is_vpn'] else "Standard"
+                status = "VPN" if record['is_vpn'] else "Standard"
+                record['last_status'] = status
                 del record['is_vpn']
+
         return data
-    except (json.JSONDecodeError, IOError): return defaults
+    except (json.JSONDecodeError, IOError):
+        return defaults
 
 def save_data(data, verbose=False):
     if verbose: print(f"  [v] Saving data to: {CONFIG_FILE}")
@@ -143,11 +173,13 @@ def save_data(data, verbose=False):
 
 # --- Core Functionality ---
 def list_known_ips(data):
+    """Prints a sorted list of all known IPs from the tally."""
     tally = data.get('ip_tally', {})
     records = data.get('speedtest_records', {})
     if not tally:
         print("No IP history found.")
         return
+
     current_ip = None
     try:
         response = requests.get("http://ip-api.com/json/?fields=query", timeout=5)
@@ -157,20 +189,30 @@ def list_known_ips(data):
         print("\n[!] Could not fetch current IP to highlight.")
 
     sorted_ips = sorted(tally.items(), key=lambda item: item[1].get('last_seen', 0), reverse=True)
-    print(f"\n{'':<3}{'IP Address':<18} {'Last Seen':<28} {'Location':<30} {'Fastest Speed (DL/UL)':<25} {'Status'}")
-    print(f"{'-'*3}{'-'*18} {'-'*28} {'-'*30} {'-'*25} {'-'*20}")
+
+    print(f"\n{'':<3}{'IP Address':<18} {'Last Seen':<28} {'Location':<30} {'Fastest Speed (DL/UL)':<25} {'Source IP':<18} {'Status'}")
+    print(f"{'-'*3}{'-'*18} {'-'*28} {'-'*30} {'-'*25} {'-'*18} {'-'*20}")
+
     for ip, details in sorted_ips:
         last_seen_ts = details.get('last_seen', 0)
         date_str = time.strftime('%m/%d/%Y', time.localtime(last_seen_ts))
         time_since_seconds = time.time() - last_seen_ts
         last_seen_str = f"{date_str} {format_time_since(time_since_seconds)}"
+        
         city = details.get('city')
         location_str = f"{city}, {details.get('region', 'N/A')}, {details.get('country_code', 'N/A')}" if city else "Not Logged"
         status = details.get('last_status', 'Unknown')
+        
         record = records.get(ip)
-        speed_str = f"{record.get('download_mbps', 0):.2f}/{record.get('upload_mbps', 0):.2f} Mbps" if record else "N/A"
+        if record:
+            speed_str = f"{record.get('download_mbps', 0):.2f}/{record.get('upload_mbps', 0):.2f} Mbps"
+            source_ip_str = record.get('source_ip', 'N/A')
+        else:
+            speed_str = "N/A"
+            source_ip_str = "N/A"
+
         prefix = "->" if ip == current_ip else "  "
-        print(f"{prefix:<3}{ip:<18} {last_seen_str:<28} {location_str:<30} {speed_str:<25} {status}")
+        print(f"{prefix:<3}{ip:<18} {last_seen_str:<28} {location_str:<30} {speed_str:<25} {source_ip_str:<18} {status}")
 
 def update_vpn_ip_list(data, verbose=False):
     print("Updating known VPN IP list...")
@@ -180,12 +222,15 @@ def update_vpn_ip_list(data, verbose=False):
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         cidrs_from_web = response.text.strip().split('\n')
+        
         if not cidrs_from_web:
              print("  [!] Fetched list is empty.")
              return data
+        
         manual_entries = {k: v for k, v in data['vpn_ip_list']['cidrs'].items() if v.get('source') == 'manual'}
         web_entries = {cidr: {"source": "x4bnet"} for cidr in cidrs_from_web}
         web_entries.update(manual_entries)
+        
         data['vpn_ip_list'] = {'timestamp': time.time(), 'cidrs': web_entries}
         print(f"Update complete. Cached {len(cidrs_from_web)} VPN CIDR ranges from web.")
         save_data(data, verbose)
@@ -196,9 +241,11 @@ def update_vpn_ip_list(data, verbose=False):
 
 def is_known_vpn(data, ip_address_str, verbose=False):
     cidr_cache = data['vpn_ip_list']
+    
     if not cidr_cache.get('cidrs') or (time.time() - cidr_cache.get('timestamp', 0) > CACHE_DURATION_SECONDS):
         data = update_vpn_ip_list(data, verbose)
         cidr_cache = data['vpn_ip_list']
+
     try:
         user_ip = ipaddress.ip_address(ip_address_str)
         for cidr, metadata in cidr_cache.get('cidrs', {}).items():
@@ -211,6 +258,7 @@ def is_known_vpn(data, ip_address_str, verbose=False):
                 continue
     except ValueError:
         if verbose: print(f"  [v] Invalid IP address for checking: {ip_address_str}")
+        
     return None
 
 def run_speed_test(data, source_interface=None, verbose=False):
@@ -221,18 +269,25 @@ def run_speed_test(data, source_interface=None, verbose=False):
     print("\n## Network Speed\n  Performing speed test... (this may take a moment)")
     try:
         st_config = {'secure': True}
+        source_ip_to_use = None
+        
         if source_interface:
-            source_ip = get_interface_details(source_interface, verbose).get('ip')
-            if source_ip:
-                st_config['source_address'] = source_ip
+            source_details = get_interface_details(source_interface, verbose)
+            if source_details and source_details.get('ip'):
+                source_ip_to_use = source_details['ip']
                 print(f"  (Using interface: {source_interface})")
             else:
                 print(f"  [!] Warning: Could not find IP for source interface {source_interface}. Using OS default.")
+        
+        if source_ip_to_use:
+            st_config['source_address'] = source_ip_to_use
+
         st = speedtest.Speedtest(**st_config)
         st.get_best_server()
         st.download()
         st.upload()
         results = st.results.dict()
+
         if verbose: print(f"  [v] Speedtest raw response: {results}")
         
         ping, dl_speed, ul_speed = results['ping'], results['download'] / 1_000_000, results['upload'] / 1_000_000
@@ -246,7 +301,12 @@ def run_speed_test(data, source_interface=None, verbose=False):
               f"  {'Current Upload:':<20} {ul_speed:.2f} Mbps\n"
               f"  {'Server:':<20} {results['server']['name']} ({server_ip})")
 
-        log_entry = {'timestamp': time.time(),'public_ip': public_ip, 'vpn_status': vpn_status,'server_ip': server_ip, 'server_name': f"{results['server']['name']} ({results['server']['country']})", 'ping_ms': ping, 'download_mbps': dl_speed, 'upload_mbps': ul_speed}
+        log_entry = {
+            'timestamp': time.time(), 'public_ip': public_ip, 'vpn_status': vpn_status,
+            'source_ip': source_ip_to_use, 'server_ip': server_ip,
+            'server_name': f"{results['server']['name']} ({results['server']['country']})",
+            'ping_ms': ping, 'download_mbps': dl_speed, 'upload_mbps': ul_speed
+        }
         data['speedtest_history'].append(log_entry)
         print("  Speed test results logged.")
         
