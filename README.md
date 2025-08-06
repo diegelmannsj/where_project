@@ -1,110 +1,68 @@
+1. Title
+
+Start the file with the main title on the first line:
 # ,where v7.5
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg) ![Version](https://img.shields.io/badge/version-7.5-brightgreen.svg) ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
+2. Summary
 
-A comprehensive command-line network and location information utility. This script provides a detailed overview of your system's current public and local network status, geolocation data, and connection history.
+On a new line, write a short, one-sentence description of the script.
 
-## What's New in Version 7.5? ✨
+Example: "A command-line utility to display public and local network and location information."
 
-This version introduces several new features and significant enhancements:
+3. Features Section
 
-* **MAC Address Vendor Lookup**: The script now identifies the manufacturer of your local network hardware (e.g., "Apple, Inc.", "Intel Corporate").
-* **Export and Import IP History**: You can now export your entire IP connection history to a CSV file for backup or analysis, and import it back into the script.
-* **Interactive Mode**: A new interactive mode guides you through the available options for a more user-friendly experience.
-* **Improved Error Handling**: More robust error handling for API timeouts, file permissions, and missing dependencies.
-* **Refined Output**: The output has been cleaned up and made even more readable.
+Create a "Features" heading: ## Features
 
----
+Below it, create a bulleted list. Each feature should be a new bullet point (*).
 
-## Features
+Make sure to list the features we've discussed:
 
-* **Public IP Details**: Fetches your public IP address, ISP, and geographic location (City, Region, Country).
-* **Local Network Info**: Lists all active network interfaces, showing their local IP address, MAC address, vendor, and default gateway.
-* **Wi-Fi Details**: For wireless connections, it displays the SSID, BSSID, signal strength, and network band (2.4/5/6 GHz).
-* **GPS Integration**: Connects to a local `gpsd` service to provide live, high-precision GPS coordinates, altitude, and a reverse-geocoded approximate street address.
-* **Advanced VPN Detection**: Uses a dual-method approach, checking against a hosting provider API and a frequently updated list of known VPN IP ranges.
-* **Connection History**: Automatically logs every public IP address you connect through. You can list this history, sorted by last seen, with the `-l`/`--list` flag.
-* **Network Speed Test**: Includes an optional, secure (HTTPS) speed test to measure your current download/upload speeds and ping.
-* **Highly Configurable**: Provides numerous command-line flags to control output, clear caches, and manage the IP history.
+Public IP details (ISP, location)
 
----
+Local network info (IP, MAC, vendor)
 
-## Installation
+WiFi details (SSID, band, signal)
 
-### 1. Prerequisites
+GPS integration (gpsd)
 
-Make sure you have Python 3 and pip installed. The `gpsd` service is required for the live GPS feature.
+VPN/Proxy detection
 
-### 2. Get the Script
+Connection history (--list)
 
-Save the latest version of the script to a file named `,where`.
+Network speed test (--speedtest)
 
-### 3. Install Dependencies
+Export/Import of IP history
 
-Save the following content into a file named `requirements.txt`:
+Interactive mode (-i)
 
-requests
-geopy
-gpsd-py3
-psutil
-netifaces
-argcomplete
-speedtest-cli
+4. Installation Section
 
+Create an "Installation" heading: ## Installation
 
-Now, install these dependencies using pip:
+Mention the prerequisites: Python 3, pip, and gpsd.
 
-pip install -r requirements.txt
+Mention that the Python dependencies (requests, geopy, psutil, etc.) should be in a requirements.txt file and installed with pip install -r requirements.txt.
 
-### 4. Make the Script Executable
-Bash
+Include the command to make the script executable: chmod +x ,where
 
-chmod +x ,where
+5. Usage Section
 
-### 5. Add to Your PATH (Recommended)
-For easy access, move the script to a directory in your system's PATH.
+Create a "Usage" heading: ## Usage
 
-Bash
+Show the basic command: ,where
 
-sudo mv ,where /usr/local/bin/
+Add an "Options" subheading: ### Options
 
-## Usage
+List the most important command-line flags and what they do (e.g., -v, -l, -s, -G, -c, -f). You can do this as a simple bulleted list to keep it easy.
 
-Simply run the script by name:
+6. Configuration Section
 
-,where
+Create a "Configuration" heading: ## Configuration
 
-### Options
+Add a sentence explaining that the script stores its cache and history in the ~/.where.json file.
 
-Flag	Alias	Description
---help	-h	Show the help message and exit.
---version	-v	Show the script's version history and exit.
---interactive	-i	Start the script in interactive mode.
---list	-l	List all known IPs from history, sorted by last seen.
---export-csv <PATH>		Export the IP history to the specified CSV file.
---import-csv <PATH>		Import IP history from the specified CSV file.
---speedtest	-s	Perform a network speed test.
---add	-A	Add the current IP to the manual VPN list.
---no-gps	-G	Skip all GPS-related functions.
---verbose	-V	Enable verbose output for debugging.
---update-vpn-list		Force a refresh of the known VPN IP list.
---clear-cache		Clear all cached data (GPS, IP history, etc.).
---force-refresh	-f	Force a refresh of the GPS location.
+7. License Section
 
----
+Create a "License" heading: ## License
 
-## Configuration
-
-The script stores all its data in a single JSON file located at `~/.where.json`. This file contains the GPS cache, IP history, VPN lists, and speed test records. You can safely delete this file at any time to reset the script's memory, or use the `--clear-cache` flag.
-
----
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a pull request or open an issue to discuss proposed changes.
-
----
-
-## License
-
-This project is licensed under the MIT License - see the `LICENSE.md` file for details.
+State that the project is under the MIT License.
