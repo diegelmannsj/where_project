@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "7.3"
+VERSION = "7.4"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v7.4 (2025-08-05):
+  - Changed --fastest flag to sort by download speed instead of upload.
 
 v7.3 (2025-08-05):
   - Added --fastest flag to sort the --list output by upload speed.
@@ -25,9 +28,6 @@ v7.2 (2025-08-05):
 
 v7.1 (2025-08-05):
   - Bug fix: Corrected TypeError in --list when a speed test record is missing a source IP.
-
-v7.0 (2025-08-05):
-  - Refactored logic to use a single source for the public IP address.
 """
 
 # --- Settings ---
@@ -166,7 +166,7 @@ def list_known_ips(data, sort_by_speed=False):
         # Sort these items by the upload speed stored in the corresponding record
         sorted_ips = sorted(
             ips_with_speeds.items(),
-            key=lambda item: records[item[0]].get('upload_mbps', 0),
+            key=lambda item: records[item[0]].get('download_mbps', 0),
             reverse=True
         )
     else:
