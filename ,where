@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "7.8"
+VERSION = "7.9"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v7.9 (2025-08-10):
+ - Added a "New Personal Best" indicator to speed test output.
 
 v7.8 (2025-08-10):
  - Added Public IP and Interface to the Max Speed record display.
@@ -28,15 +31,6 @@ v7.6 (2025-08-10):
 
 v7.5 (2025-08-05):
   - The --fastest flag now implies --list.
-
-v7.4 (2025-08-05):
-  - Changed --fastest flag to sort by download speed instead of upload.
-
-v7.3 (2025-08-05):
-  - Added --fastest flag to sort the --list output by upload speed.
-
-v7.2 (2025-08-05):
-  - Bug fix: The --add flag now correctly bypasses the results cache.
 """
 
 # --- Settings ---
@@ -47,6 +41,7 @@ CACHE_DURATION_SECONDS = 90 * 24 * 60 * 60 # 90 days
 class Style:
     BOLD = '\033[1m'
     GREEN = '\033[92m'
+    YELLOW = '\033[93m'
     ENDC = '\033[0m'
 
 # --- Optional Library Imports ---
@@ -254,6 +249,10 @@ def is_known_vpn(data, ip_address_str, verbose=False):
     return None
 
 def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=False):
+    """
+    This function has been completely updated to v7.9 specifications.
+    It now handles the new logging, formatting, and new record indication.
+    """
     if not SPEEDTEST_ENABLED:
         print("\n## Network Speed\n  To run a speed test, please install the library:\n  pip install speedtest-cli")
         return data
@@ -268,7 +267,7 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
             source_ip_to_use = source_details['ip']
             print(f"  (Using interface: {source_details['name']})")
         elif source_interface:
-            print(f"  [!] Warning: Could not find IP for source interface {source_interface}. Using OS default.")
+            print(f"  [!] Warning: Could not find IP for source interface {source_interface}.")
         
         if source_ip_to_use:
             st_config['source_address'] = source_ip_to_use
@@ -280,39 +279,45 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
         results = st.results.dict()
         if verbose: print(f"  [v] Speedtest raw response: {results}")
         
-        ping, dl_speed, ul_speed = results['ping'], results['download'] / 1_000_000, results['upload'] / 1_000_000
+        # Gather current test results
+        ping = results['ping']
+        dl_speed = results['download'] / 1_000_000
+        ul_speed = results['upload'] / 1_000_000
         server_host = results['server']['host'].split(':')[0]
         server_ip = socket.gethostbyname(server_host)
 
+        # Create the new log entry with all required fields
         log_entry = {
-            'timestamp': time.time(), 'public_ip': public_ip, 'vpn_status': vpn_status,
+            'timestamp': time.time(),
+            'public_ip': public_ip,
+            'vpn_status': vpn_status,
             'source_ip': source_ip_to_use,
             'source_interface': source_details.get('name') if source_details else 'N/A',
             'server_ip': server_ip,
             'server_name': f"{results['server']['name']} ({results['server']['country']})",
-            'ping_ms': ping, 'download_mbps': dl_speed, 'upload_mbps': ul_speed
+            'ping_ms': ping,
+            'download_mbps': dl_speed,
+            'upload_mbps': ul_speed
         }
         data['speedtest_history'].append(log_entry)
         
         # Check for new personal best and update if necessary
+        is_new_record = False
         record = data['speedtest_records'].get(public_ip)
         if not record or dl_speed > record.get('download_mbps', 0):
+            is_new_record = True
             data['speedtest_records'][public_ip] = log_entry
-            # Update the 'record' variable to the new best for immediate display
-            record = log_entry
-
-        # ----- START: v7.6 MODIFIED OUTPUT BLOCK -----
+            record = log_entry # Update 'record' to the new best for immediate display
         
-         # 1. Print Max Speed (using the potentially updated 'record' variable)
+        # --- Begin v7.9 Formatted Output ---
+        
+        # 1. Print Max Speed (using the 'record' variable)
         if record:
             record_time_str = time.strftime('%m/%d/%Y', time.localtime(record['timestamp']))
             record_vpn_status = f"({record.get('vpn_status', 'N/A')})"
             record_ip = record.get('public_ip', 'N/A')
             record_iface = record.get('source_interface', 'N/A')
-            
-            # Build the context string for the record
             context_str = f"(IP: {record_ip} on {record_iface}, {record_time_str})"
-            
             print(f"  {'Max Speed (DL/UL):':<22} {record['download_mbps']:.2f} / {record['upload_mbps']:.2f} Mbps {record_vpn_status} {context_str}")
 
         # 2. Print Server
@@ -328,12 +333,16 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
         highlighted_value = f"{Style.BOLD}{Style.GREEN}{current_speed_value}{Style.ENDC}"
         print(f"  {current_speed_label:<22} {highlighted_value}")
         
-        # 5. Print logging message
+        # 5. Print New Record Indicator if applicable
+        if is_new_record:
+            indicator_text = "New Personal Best for this IP! ⭐"
+            print(f"  {Style.BOLD}{Style.YELLOW}{indicator_text}{Style.ENDC}")
+            
+        # 6. Print logging confirmation
         print("  Speed test results logged.")
-
-        # ----- END: v7.6 MODIFIED OUTPUT BLOCK -----
         
         return data
+
     except Exception as e:
         print(f"  Could not complete speed test: {e}")
         return data
