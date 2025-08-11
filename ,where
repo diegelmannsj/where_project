@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "7.6"
+VERSION = "7.7"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v7.7 (2025-08-10):
+ - Increased GPS location cache duration from 7 to 90 days.
 
 v7.6 (2025-08-10):
  - Reorganized speed test output for clarity as requested.
@@ -35,7 +38,7 @@ v7.2 (2025-08-05):
 
 # --- Settings ---
 CONFIG_FILE = Path.home() / ".where.json"
-CACHE_DURATION_SECONDS = 7 * 24 * 60 * 60  # 7 days
+CACHE_DURATION_SECONDS = 90 * 24 * 60 * 60 # 90 days
 
 # --- Terminal Colors/Styles for Highlighting ---
 class Style:
