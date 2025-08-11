@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "7.7"
+VERSION = "7.8"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v7.8 (2025-08-10):
+ - Added Public IP and Interface to the Max Speed record display.
 
 v7.7 (2025-08-10):
  - Increased GPS location cache duration from 7 to 90 days.
@@ -283,7 +286,9 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
 
         log_entry = {
             'timestamp': time.time(), 'public_ip': public_ip, 'vpn_status': vpn_status,
-            'source_ip': source_ip_to_use, 'server_ip': server_ip,
+            'source_ip': source_ip_to_use,
+            'source_interface': source_details.get('name') if source_details else 'N/A',
+            'server_ip': server_ip,
             'server_name': f"{results['server']['name']} ({results['server']['country']})",
             'ping_ms': ping, 'download_mbps': dl_speed, 'upload_mbps': ul_speed
         }
@@ -298,11 +303,17 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
 
         # ----- START: v7.6 MODIFIED OUTPUT BLOCK -----
         
-        # 1. Print Max Speed (using the potentially updated 'record' variable)
+         # 1. Print Max Speed (using the potentially updated 'record' variable)
         if record:
             record_time_str = time.strftime('%m/%d/%Y', time.localtime(record['timestamp']))
             record_vpn_status = f"({record.get('vpn_status', 'N/A')})"
-            print(f"  {'Max Speed (DL/UL):':<22} {record['download_mbps']:.2f} / {record['upload_mbps']:.2f} Mbps {record_vpn_status} (on {record_time_str})")
+            record_ip = record.get('public_ip', 'N/A')
+            record_iface = record.get('source_interface', 'N/A')
+            
+            # Build the context string for the record
+            context_str = f"(IP: {record_ip} on {record_iface}, {record_time_str})"
+            
+            print(f"  {'Max Speed (DL/UL):':<22} {record['download_mbps']:.2f} / {record['upload_mbps']:.2f} Mbps {record_vpn_status} {context_str}")
 
         # 2. Print Server
         server_display = f"{results['server']['name']} ({server_ip})"
