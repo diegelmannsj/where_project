@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "7.9"
+VERSION = "8.0"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v8.0 (2025-08-10):
+ - Changed Max Speed record to display the local source IP instead of public IP.
 
 v7.9 (2025-08-10):
  - Added a "New Personal Best" indicator to speed test output.
@@ -28,9 +31,6 @@ v7.7 (2025-08-10):
 
 v7.6 (2025-08-10):
  - Reorganized speed test output for clarity as requested.
-
-v7.5 (2025-08-05):
-  - The --fastest flag now implies --list.
 """
 
 # --- Settings ---
@@ -250,8 +250,7 @@ def is_known_vpn(data, ip_address_str, verbose=False):
 
 def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=False):
     """
-    This function has been completely updated to v7.9 specifications.
-    It now handles the new logging, formatting, and new record indication.
+    This function has been completely updated to v8.0 specifications.
     """
     if not SPEEDTEST_ENABLED:
         print("\n## Network Speed\n  To run a speed test, please install the library:\n  pip install speedtest-cli")
@@ -309,15 +308,18 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
             data['speedtest_records'][public_ip] = log_entry
             record = log_entry # Update 'record' to the new best for immediate display
         
-        # --- Begin v7.9 Formatted Output ---
+        # --- Begin v8.0 Formatted Output ---
         
         # 1. Print Max Speed (using the 'record' variable)
         if record:
             record_time_str = time.strftime('%m/%d/%Y', time.localtime(record['timestamp']))
             record_vpn_status = f"({record.get('vpn_status', 'N/A')})"
-            record_ip = record.get('public_ip', 'N/A')
+            # THIS IS THE KEY CHANGE for v8.0: Use 'source_ip' instead of 'public_ip'
+            record_ip = record.get('source_ip', 'N/A')
             record_iface = record.get('source_interface', 'N/A')
+            
             context_str = f"(IP: {record_ip} on {record_iface}, {record_time_str})"
+            
             print(f"  {'Max Speed (DL/UL):':<22} {record['download_mbps']:.2f} / {record['upload_mbps']:.2f} Mbps {record_vpn_status} {context_str}")
 
         # 2. Print Server
