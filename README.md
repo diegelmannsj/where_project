@@ -59,6 +59,7 @@ The script is invoked from the command line with various flags to control its be
 | `--speedtest`       | `-s`  | Perform a network speed test.                                    |
 | `--list`            | `-l`  | List all known IPs from history, sorted by last seen.            |
 | `--fastest`         |       | List known IPs sorted by fastest download speed (implies `--list`).|
+| `--quickest_dev`    |       | Display active WiFi devices sorted by band and bit rate.         |
 | `--all`             | `-a`  | Show details for all local network interfaces.                   |
 | `--source <iface>`  |       | Specify a source interface for tests (e.g., `wlan0`, `eth0`).    |
 

@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "8.0"
+VERSION = "8.1"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v8.1 (2025-08-15):
+ - Added --quickest_dev option to show active WiFi devices sorted by performance.
 
 v8.0 (2025-08-10):
  - Changed Max Speed record to display the local source IP instead of public IP.
@@ -559,15 +562,64 @@ def get_wifi_details(verbose=False):
                 details['SSID'] = ssid_match.group(1).strip()
                 signal_match = re.search(r'signal:\s+(-\d+\.\d+\s+dBm)', link_output)
                 if signal_match: details['Signal'] = signal_match.group(1)
+                bitrate_match = re.search(r'tx bitrate:\s+([\d.]+\s+MBit/s)', link_output)
+                if bitrate_match: details['Bit Rate'] = bitrate_match.group(1)
                 freq_match = re.search(r'freq:\s+(\d+)', link_output)
                 if freq_match:
                     freq = int(freq_match.group(1))
+                    details['freq'] = freq
                     if 2400 < freq < 2500: details['Band'] = "2.4 GHz"
                     elif 5100 < freq < 5900: details['Band'] = "5 GHz"
                     elif 5900 < freq < 7200: details['Band'] = "6 GHz"
                 wifi_data[iface] = details
     except (FileNotFoundError, subprocess.CalledProcessError): pass
     return wifi_data
+
+def display_quickest_devices(verbose=False):
+    """Displays a sorted list of active WiFi devices."""
+    print("\n## Quickest WiFi Devices")
+    wifi_details = get_wifi_details(verbose=verbose)
+    if not wifi_details:
+        print("  No active WiFi devices found.")
+        return
+
+    # Define the sorting order for bands
+    band_order = {"6 GHz": 0, "5 GHz": 1, "2.4 GHz": 2}
+
+    # Sort the devices
+    sorted_devices = sorted(
+        wifi_details.items(),
+        key=lambda item: (
+            band_order.get(item[1].get('Band'), 99), # Sort by band first
+            -float(item[1].get('Bit Rate', '0').split()[0]) # Then by bit rate descending
+        )
+    )
+
+    # Get default gateway for comparison
+    default_gateway_iface = None
+    if NETIFACES_ENABLED:
+        try:
+            gws = netifaces.gateways()
+            if 'default' in gws and netifaces.AF_INET in gws['default']:
+                _, default_gateway_iface = gws['default'][netifaces.AF_INET]
+        except Exception: pass
+
+    # Print the sorted list
+    print(f"  {'Interface':<15} {'SSID':<25} {'Band':<10} {'Bit Rate':<20} {'Signal'}")
+    print(f"  {'-'*15} {'-'*25} {'-'*10} {'-'*20} {'-'*15}")
+    for iface, details in sorted_devices:
+        print(f"  {iface:<15} {details.get('SSID', 'N/A'):<25} {details.get('Band', 'N/A'):<10} {details.get('Bit Rate', 'N/A'):<20} {details.get('Signal', 'N/A')}")
+
+    # Compare with default gateway
+    if default_gateway_iface and sorted_devices:
+        top_device = sorted_devices[0][0]
+        print("\n  ---")
+        if top_device == default_gateway_iface:
+            print(f"  {Style.GREEN}✓ Default gateway ({default_gateway_iface}) is the quickest device.{Style.ENDC}")
+        else:
+            print(f"  {Style.YELLOW}! Default gateway ({default_gateway_iface}) is not the quickest available device.{Style.ENDC}")
+            print(f"    The quickest device is: {top_device}")
+
 
 def display_local_network_info(specific_interface_info=None, show_all=False, verbose=False):
     if not PSUTIL_ENABLED:
@@ -642,6 +694,7 @@ if __name__ == "__main__":
     parser.add_argument('--source', type=str, help='Specify the source interface for outbound tests (e.g., wlan0).')
     parser.add_argument('-a', '--all', action='store_true', help='Show details for all local network interfaces.')
     parser.add_argument('--fastest', action='store_true', help='List known IPs sorted by fastest download speed (implies --list).')
+    parser.add_argument('--quickest_dev', action='store_true', help='Display active WiFi devices sorted by band and bit rate.')
     
     if ARGCOMPLETE_ENABLED: argcomplete.autocomplete(parser)
     args = parser.parse_args()
@@ -654,6 +707,10 @@ if __name__ == "__main__":
         exit()
 
     data = load_data(args.verbose)
+
+    if args.quickest_dev:
+        display_quickest_devices(args.verbose)
+        exit()
 
     if args.list or args.fastest:
         list_known_ips(data, sort_by_speed=args.fastest)
