@@ -13,9 +13,14 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "8.1"
+VERSION = "8.2"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v8.2 (2025-08-18):
+ - Refactored --quickest_dev to use iwconfig for more detailed output.
+ - Added Link Quality and Signal Level columns to --quickest_dev.
+ - Added highlighting for out-of-order network interfaces in --quickest_dev.
 
 v8.1 (2025-08-15):
  - Added --quickest_dev option to show active WiFi devices sorted by performance.
