@@ -45,6 +45,7 @@ class Style:
     BOLD = '\033[1m'
     GREEN = '\033[92m'
     YELLOW = '\033[93m'
+    RED = '\033[91m'
     ENDC = '\033[0m'
 
 # --- Optional Library Imports ---
@@ -591,6 +592,27 @@ def get_wifi_details(verbose=False):
         if verbose: print("  [v] /proc/net/wireless not found, cannot list wireless interfaces.")
     return wifi_data
 
+def get_default_route_order(verbose=False):
+    """Gets a priority-ordered list of default route interfaces."""
+    routes = []
+    try:
+        if verbose: print("  [v] Running command: ip route show default")
+        output = subprocess.check_output(['ip', 'route', 'show', 'default'], text=True, stderr=subprocess.DEVNULL)
+        # Regex to capture metric and device name
+        pattern = re.compile(r'dev\s+([^\s]+).*?metric\s+(\d+)')
+        for line in output.splitlines():
+            match = pattern.search(line)
+            if match:
+                device, metric = match.groups()
+                routes.append((int(metric), device))
+        # Sort by metric (lower is higher priority)
+        routes.sort()
+        if verbose: print(f"  [v] Found default routes: {routes}")
+        return [device for metric, device in routes]
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        if verbose: print(f"  [v] Could not determine default route order: {e}")
+        return []
+
 def display_quickest_devices(verbose=False):
     """Displays a sorted list of active WiFi devices."""
     print("\n## Quickest WiFi Devices")
@@ -611,7 +633,7 @@ def display_quickest_devices(verbose=False):
         )
     )
 
-    # Get default gateway for comparison
+    # Get default gateway for comparison and route order for highlighting
     default_gateway_iface = None
     if NETIFACES_ENABLED:
         try:
@@ -619,13 +641,27 @@ def display_quickest_devices(verbose=False):
             if 'default' in gws and netifaces.AF_INET in gws['default']:
                 _, default_gateway_iface = gws['default'][netifaces.AF_INET]
         except Exception: pass
+    
+    route_order = get_default_route_order(verbose)
+    quickest_order = [iface for iface, details in sorted_devices]
 
     # Print the sorted list
     print(f"  {'':<3}{'Interface':<12} {'SSID':<22} {'Band':<10} {'Bit Rate':<15} {'Link Quality':<15} {'Signal Level'}")
     print(f"  {'-'*3}{'-'*12} {'-'*22} {'-'*10} {'-'*15} {'-'*15} {'-'*15}")
-    for iface, details in sorted_devices:
+    for i, (iface, details) in enumerate(sorted_devices):
         prefix = "->" if iface == default_gateway_iface else "  "
-        print(f"  {prefix:<3}{iface:<12} {details.get('SSID', 'N/A'):<22} {details.get('Band', 'N/A'):<10} {details.get('Bit Rate', 'N/A'):<15} {details.get('Link Quality', 'N/A'):<15} {details.get('Signal Level', 'N/A')}")
+        
+        # Check if the device is out of order
+        is_out_of_order = False
+        if i < len(route_order) and iface != route_order[i]:
+            is_out_of_order = True
+
+        line = f"  {prefix:<3}{iface:<12} {details.get('SSID', 'N/A'):<22} {details.get('Band', 'N/A'):<10} {details.get('Bit Rate', 'N/A'):<15} {details.get('Link Quality', 'N/A'):<15} {details.get('Signal Level', 'N/A')}"
+        
+        if is_out_of_order:
+            print(f"{Style.RED}{line}{Style.ENDC}")
+        else:
+            print(line)
 
 
 
