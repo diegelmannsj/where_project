@@ -546,33 +546,49 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
 def get_wifi_details(verbose=False):
     system = platform.system()
     wifi_data = {}
+    if system != "Linux":
+        return wifi_data
     try:
-        if system == "Linux":
-            if verbose: print("  [v] Running command: iw dev")
-            output = subprocess.check_output(['iw', 'dev'], text=True, stderr=subprocess.DEVNULL)
-            interfaces = re.findall(r'Interface\s+([^\s]+)', output)
-            for iface in interfaces:
-                details = {}
-                if verbose: print(f"  [v] Running command: iw dev {iface} link")
-                link_output = subprocess.check_output(['iw', 'dev', iface, 'link'], text=True, stderr=subprocess.DEVNULL)
-                bssid_match = re.search(r'Connected to ([0-9a-fA-F:]{17})', link_output)
-                if bssid_match: details['BSSID'] = bssid_match.group(1)
-                ssid_match = re.search(r'SSID:\s+(.+)', link_output)
+        # First, get all wireless interfaces from /proc/net/wireless
+        with open('/proc/net/wireless') as f:
+            interfaces = [line.split(':')[0].strip() for line in f.readlines()[2:]]
+
+        for iface in interfaces:
+            details = {}
+            try:
+                if verbose: print(f"  [v] Running command: iwconfig {iface}")
+                output = subprocess.check_output(['iwconfig', iface], text=True, stderr=subprocess.DEVNULL)
+                
+                ssid_match = re.search(r'ESSID:"([^"]+)"', output)
                 if not ssid_match: continue
-                details['SSID'] = ssid_match.group(1).strip()
-                signal_match = re.search(r'signal:\s+(-\d+\.\d+\s+dBm)', link_output)
-                if signal_match: details['Signal'] = signal_match.group(1)
-                bitrate_match = re.search(r'tx bitrate:\s+([\d.]+\s+MBit/s)', link_output)
-                if bitrate_match: details['Bit Rate'] = bitrate_match.group(1)
-                freq_match = re.search(r'freq:\s+(\d+)', link_output)
+                details['SSID'] = ssid_match.group(1)
+
+                bssid_match = re.search(r'Access Point:\s+([0-9a-fA-F:]{17})', output)
+                if bssid_match: details['BSSID'] = bssid_match.group(1)
+
+                bitrate_match = re.search(r'Bit Rate[=:]([\d.]+\s+Mb/s)', output)
+                if bitrate_match: details['Bit Rate'] = bitrate_match.group(1).replace("Mb/s", "MBit/s")
+
+                signal_match = re.search(r'Signal level[=:](-\d+\s+dBm)', output)
+                if signal_match: details['Signal Level'] = signal_match.group(1)
+                
+                quality_match = re.search(r'Link Quality[=:]([\d/]+)', output)
+                if quality_match: details['Link Quality'] = quality_match.group(1)
+
+                freq_match = re.search(r'Frequency:([\d.]+)\s+GHz', output)
                 if freq_match:
-                    freq = int(freq_match.group(1))
+                    freq = float(freq_match.group(1)) * 1000 # Convert GHz to MHz for consistency
                     details['freq'] = freq
                     if 2400 < freq < 2500: details['Band'] = "2.4 GHz"
                     elif 5100 < freq < 5900: details['Band'] = "5 GHz"
                     elif 5900 < freq < 7200: details['Band'] = "6 GHz"
+                
                 wifi_data[iface] = details
-    except (FileNotFoundError, subprocess.CalledProcessError): pass
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                if verbose: print(f"  [v] Could not get details for {iface} with iwconfig.")
+                continue
+    except FileNotFoundError:
+        if verbose: print("  [v] /proc/net/wireless not found, cannot list wireless interfaces.")
     return wifi_data
 
 def display_quickest_devices(verbose=False):
@@ -605,20 +621,12 @@ def display_quickest_devices(verbose=False):
         except Exception: pass
 
     # Print the sorted list
-    print(f"  {'Interface':<15} {'SSID':<25} {'Band':<10} {'Bit Rate':<20} {'Signal'}")
-    print(f"  {'-'*15} {'-'*25} {'-'*10} {'-'*20} {'-'*15}")
+    print(f"  {'':<3}{'Interface':<12} {'SSID':<22} {'Band':<10} {'Bit Rate':<15} {'Link Quality':<15} {'Signal Level'}")
+    print(f"  {'-'*3}{'-'*12} {'-'*22} {'-'*10} {'-'*15} {'-'*15} {'-'*15}")
     for iface, details in sorted_devices:
-        print(f"  {iface:<15} {details.get('SSID', 'N/A'):<25} {details.get('Band', 'N/A'):<10} {details.get('Bit Rate', 'N/A'):<20} {details.get('Signal', 'N/A')}")
+        prefix = "->" if iface == default_gateway_iface else "  "
+        print(f"  {prefix:<3}{iface:<12} {details.get('SSID', 'N/A'):<22} {details.get('Band', 'N/A'):<10} {details.get('Bit Rate', 'N/A'):<15} {details.get('Link Quality', 'N/A'):<15} {details.get('Signal Level', 'N/A')}")
 
-    # Compare with default gateway
-    if default_gateway_iface and sorted_devices:
-        top_device = sorted_devices[0][0]
-        print("\n  ---")
-        if top_device == default_gateway_iface:
-            print(f"  {Style.GREEN}✓ Default gateway ({default_gateway_iface}) is the quickest device.{Style.ENDC}")
-        else:
-            print(f"  {Style.YELLOW}! Default gateway ({default_gateway_iface}) is not the quickest available device.{Style.ENDC}")
-            print(f"    The quickest device is: {top_device}")
 
 
 def display_local_network_info(specific_interface_info=None, show_all=False, verbose=False):
