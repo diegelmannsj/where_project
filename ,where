@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "8.2"
+VERSION = "8.3"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v8.3 (2025-08-28):
+ - Enhanced --speedtest 'New Personal Best' message to display the previous record it surpassed.
 
 v8.2 (2025-08-18):
  - Refactored --quickest_dev to use iwconfig for more detailed output.
@@ -260,6 +263,7 @@ def is_known_vpn(data, ip_address_str, verbose=False):
 def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=False):
     """
     This function has been completely updated to v8.0 specifications.
+    MODIFIED to show previous record on new personal best.
     """
     if not SPEEDTEST_ENABLED:
         print("\n## Network Speed\n  To run a speed test, please install the library:\n  pip install speedtest-cli")
@@ -309,21 +313,26 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
         }
         data['speedtest_history'].append(log_entry)
         
+        # --- MODIFICATION START ---
+
         # Check for new personal best and update if necessary
         is_new_record = False
-        record = data['speedtest_records'].get(public_ip)
-        if not record or dl_speed > record.get('download_mbps', 0):
+        # Get the previous record *before* checking for a new one
+        previous_record = data['speedtest_records'].get(public_ip)
+        
+        if not previous_record or dl_speed > previous_record.get('download_mbps', 0):
             is_new_record = True
             data['speedtest_records'][public_ip] = log_entry
-            record = log_entry # Update 'record' to the new best for immediate display
+            record = log_entry # The current test is the new max record
+        else:
+            record = previous_record # The old record is still the max record
         
-        # --- Begin v8.0 Formatted Output ---
+        # --- End v8.0 Formatted Output ---
         
-        # 1. Print Max Speed (using the 'record' variable)
+        # 1. Print Max Speed (using the 'record' variable which now holds the current max)
         if record:
             record_time_str = time.strftime('%m/%d/%Y', time.localtime(record['timestamp']))
             record_vpn_status = f"({record.get('vpn_status', 'N/A')})"
-            # THIS IS THE KEY CHANGE for v8.0: Use 'source_ip' instead of 'public_ip'
             record_ip = record.get('source_ip', 'N/A')
             record_iface = record.get('source_interface', 'N/A')
             
@@ -346,8 +355,15 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
         
         # 5. Print New Record Indicator if applicable
         if is_new_record:
-            indicator_text = "New Personal Best for this IP! ⭐"
+            if previous_record:
+                prev_dl = previous_record.get('download_mbps', 0)
+                prev_ul = previous_record.get('upload_mbps', 0)
+                indicator_text = f"New Personal Best for this IP! ⭐ (Previous: {prev_dl:.2f} / {prev_ul:.2f} Mbps)"
+            else:
+                indicator_text = "New Personal Best for this IP! ⭐ (First record for this IP)"
             print(f"  {Style.BOLD}{Style.YELLOW}{indicator_text}{Style.ENDC}")
+            
+        # --- MODIFICATION END ---
             
         # 6. Print logging confirmation
         print("  Speed test results logged.")
