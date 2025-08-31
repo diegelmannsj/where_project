@@ -13,9 +13,13 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "8.3"
+VERSION = "8.4"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v8.4 (2025-08-30):
+ - Replaced bitrate/band detection to use the modern 'iw' command.
+ - Fixes '--quickest_dev' Bit Rate showing 'N/A' on systems with newer Wi-Fi drivers.
 
 v8.3 (2025-08-28):
  - Enhanced --speedtest 'New Personal Best' message to display the previous record it surpassed.
@@ -577,38 +581,52 @@ def get_wifi_details(verbose=False):
 
         for iface in interfaces:
             details = {}
+            # --- Get details from legacy iwconfig ---
             try:
                 if verbose: print(f"  [v] Running command: iwconfig {iface}")
-                output = subprocess.check_output(['iwconfig', iface], text=True, stderr=subprocess.DEVNULL)
+                output_iwconfig = subprocess.check_output(['iwconfig', iface], text=True, stderr=subprocess.DEVNULL)
                 
-                ssid_match = re.search(r'ESSID:"([^"]+)"', output)
+                ssid_match = re.search(r'ESSID:"([^"]+)"', output_iwconfig)
                 if not ssid_match: continue
                 details['SSID'] = ssid_match.group(1)
 
-                bssid_match = re.search(r'Access Point:\s+([0-9a-fA-F:]{17})', output)
+                bssid_match = re.search(r'Access Point:\s+([0-9a-fA-F:]{17})', output_iwconfig)
                 if bssid_match: details['BSSID'] = bssid_match.group(1)
-
-                bitrate_match = re.search(r'Bit Rate[=:]([\d.]+\s+Mb/s)', output)
-                if bitrate_match: details['Bit Rate'] = bitrate_match.group(1).replace("Mb/s", "MBit/s")
-
-                signal_match = re.search(r'Signal level[=:](-\d+\s+dBm)', output)
+                
+                signal_match = re.search(r'Signal level[=:](-\d+\s+dBm)', output_iwconfig)
                 if signal_match: details['Signal Level'] = signal_match.group(1)
                 
-                quality_match = re.search(r'Link Quality[=:]([\d/]+)', output)
+                quality_match = re.search(r'Link Quality[=:]([\d/]+)', output_iwconfig)
                 if quality_match: details['Link Quality'] = quality_match.group(1)
 
-                freq_match = re.search(r'Frequency:([\d.]+)\s+GHz', output)
-                if freq_match:
-                    freq = float(freq_match.group(1)) * 1000 # Convert GHz to MHz for consistency
-                    details['freq'] = freq
-                    if 2400 < freq < 2500: details['Band'] = "2.4 GHz"
-                    elif 5100 < freq < 5900: details['Band'] = "5 GHz"
-                    elif 5900 < freq < 7200: details['Band'] = "6 GHz"
-                
-                wifi_data[iface] = details
             except (FileNotFoundError, subprocess.CalledProcessError):
                 if verbose: print(f"  [v] Could not get details for {iface} with iwconfig.")
+                # If iwconfig fails, we can't get basic info, so skip to next interface
                 continue
+
+            # --- NEW: Get modern stats from 'iw' to override/add details ---
+            try:
+                if verbose: print(f"  [v] Running command: iw dev {iface} link")
+                output_iw = subprocess.check_output(['iw', 'dev', iface, 'link'], text=True, stderr=subprocess.DEVNULL)
+
+                bitrate_match_iw = re.search(r'\ttx bitrate:\s+([\d.]+\s+\w+Bit/s)', output_iw)
+                if bitrate_match_iw:
+                    details['Bit Rate'] = bitrate_match_iw.group(1)
+
+                freq_match_iw = re.search(r'\tfreq:\s+(\d+)', output_iw)
+                if freq_match_iw:
+                    freq = int(freq_match_iw.group(1))
+                    details['freq'] = freq
+                    if 2400 <= freq < 3000: details['Band'] = "2.4 GHz"
+                    elif 5000 <= freq < 6000: details['Band'] = "5 GHz"
+                    elif 5900 <= freq < 7200: details['Band'] = "6 GHz"
+
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                if verbose: print(f"  [v] Could not get modern stats for {iface} with iw. Some fields may be N/A.")
+                pass
+            
+            wifi_data[iface] = details
+
     except FileNotFoundError:
         if verbose: print("  [v] /proc/net/wireless not found, cannot list wireless interfaces.")
     return wifi_data
