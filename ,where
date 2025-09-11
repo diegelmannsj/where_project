@@ -13,14 +13,16 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "8.4"
+VERSION = "8.5"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v8.5 (2025-09-10): - Added -e/--wired flag to find and force tests on the primary wired interface. - Refactored main logic to prioritize source interface selection.
 
 v8.4 (2025-08-30):
  - Replaced bitrate/band detection to use the modern 'iw' command.
  - Fixes '--quickest_dev' Bit Rate showing 'N/A' on systems with newer Wi-Fi drivers.
-
+ 
 v8.3 (2025-08-28):
  - Enhanced --speedtest 'New Personal Best' message to display the previous record it surpassed.
 
@@ -232,8 +234,8 @@ def update_vpn_ip_list(data, verbose=False):
         response.raise_for_status()
         cidrs_from_web = response.text.strip().split('\n')
         if not cidrs_from_web:
-              print("  [!] Fetched list is empty.")
-              return data
+                print("  [!] Fetched list is empty.")
+                return data
         manual_entries = {k: v for k, v in data['vpn_ip_list']['cidrs'].items() if v.get('source') == 'manual'}
         web_entries = {cidr: {"source": "x4bnet"} for cidr in cidrs_from_web}
         web_entries.update(manual_entries)
@@ -562,12 +564,40 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                 print(f"  {'Times Seen:':<25} 1 (New IP!)\n"
                       f"  {'Last Seen:':<25} Never\n"
                       f"  {'First Seen:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(current_time))}")
-            display_local_network_info(specific_interface_info=source_info, show_all=show_all_interfaces, verbose=verbose)
+            display_local_network_info(specific_interface_info=source_info, show_all=args.all, verbose=verbose)
         else:
             print(f"\nError: API Error: Could not fetch details. Message: {ip_data.get('message')}")
     except requests.exceptions.RequestException:
         print("\nError: Network Error: Could not connect to the public IP API.")
     return data, server_ip, status_for_tally
+
+# --- NEW in v8.5 ---
+def find_wired_interface(verbose=False):
+    """Finds the first active, non-loopback, wired interface with an IPv4 address."""
+    if not PSUTIL_ENABLED:
+        return None
+    try:
+        stats = psutil.net_if_stats()
+        addrs = psutil.net_if_addrs()
+        # Prioritize interfaces by a common route metric order if possible
+        route_order = get_default_route_order(verbose)
+        # Check ordered interfaces first
+        for iface in route_order:
+            if iface in stats and stats[iface].isup and 'lo' not in iface.lower() and (iface.startswith('en') or iface.startswith('eth')):
+                iface_addrs = addrs.get(iface)
+                if iface_addrs and any(addr.family == socket.AF_INET for addr in iface_addrs):
+                    if verbose: print(f"  [v] Found active wired interface via route priority: {iface}")
+                    return iface
+        # Fallback to iterating all interfaces
+        for iface, iface_stats in stats.items():
+            if iface_stats.isup and 'lo' not in iface.lower() and (iface.startswith('en') or iface.startswith('eth')):
+                iface_addrs = addrs.get(iface)
+                if iface_addrs and any(addr.family == socket.AF_INET for addr in iface_addrs):
+                    if verbose: print(f"  [v] Found active wired interface via iteration: {iface}")
+                    return iface
+    except Exception as e:
+        if verbose: print(f"  [v] Error finding wired interface: {e}")
+    return None
 
 def get_wifi_details(verbose=False):
     system = platform.system()
@@ -775,12 +805,22 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--speedtest', action='store_true', help='Perform a network speed test.')
     parser.add_argument('-l', '--list', action='store_true', help='List all known IPs from history.')
     parser.add_argument('--source', type=str, help='Specify the source interface for outbound tests (e.g., wlan0).')
+    parser.add_argument('-e', '--wired', action='store_true', help='Force tests to use the primary wired network interface.') # --- NEW in v8.5 ---
     parser.add_argument('-a', '--all', action='store_true', help='Show details for all local network interfaces.')
     parser.add_argument('--fastest', action='store_true', help='List known IPs sorted by fastest download speed (implies --list).')
     parser.add_argument('--quickest_dev', action='store_true', help='Display active WiFi devices sorted by band and bit rate.')
     
     if ARGCOMPLETE_ENABLED: argcomplete.autocomplete(parser)
     args = parser.parse_args()
+
+    # --- NEW in v8.5 ---
+    # Handle mutually exclusive flags
+    if args.wired and args.quickest_dev:
+        print(f"\n{Style.RED}[!] Error: --wired and --quickest_dev cannot be used together.{Style.ENDC}")
+        sys.exit(1)
+    if args.source and args.wired:
+        print(f"\n{Style.RED}[!] Error: --source and --wired cannot be used together. --source is more specific.{Style.ENDC}")
+        sys.exit(1)
 
     if args.clear_cache:
         if os.path.exists(CONFIG_FILE):
@@ -803,9 +843,21 @@ if __name__ == "__main__":
         data = update_vpn_ip_list(data, verbose=args.verbose)
         exit()
 
-    data, public_ip, vpn_status = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps, add_manual=args.add, source_interface=args.source, show_all_interfaces=args.all)
+    # --- NEW in v8.5 ---
+    # Determine which interface to use based on flags
+    target_interface = None
+    if args.source:
+        target_interface = args.source
+    elif args.wired:
+        print("Searching for an active wired interface...")
+        target_interface = find_wired_interface(args.verbose)
+        if not target_interface:
+            print(f"\n{Style.RED}[!] --wired was specified, but no active wired interface could be found.{Style.ENDC}")
+            sys.exit(1)
+
+    data, public_ip, vpn_status = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps, add_manual=args.add, source_interface=target_interface, show_all_interfaces=args.all)
     
     if args.speedtest and public_ip:
-         data = run_speed_test(data, public_ip, vpn_status, source_interface=args.source, verbose=args.verbose)
+         data = run_speed_test(data, public_ip, vpn_status, source_interface=target_interface, verbose=args.verbose)
     
     save_data(data, args.verbose)
