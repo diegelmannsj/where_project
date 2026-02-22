@@ -13,9 +13,12 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "8.5"
+VERSION = "8.6"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v8.6 (2026-02-21):
+ - Added --install-completion flag to provide setup instructions for tab-autocompletion.
 
 v8.5 (2026-02-21):
  - Fixed 6 GHz band detection logic to prevent overlap with 5 GHz range.
@@ -553,7 +556,31 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--speedtest', action='store_true', help='Perform a speed test.')
     parser.add_argument('-l', '--list', action='store_true', help='List IP history.')
     parser.add_argument('--quickest_dev', action='store_true', help='Show active WiFi devices.')
+    parser.add_argument('--install-completion', action='store_true', help='Show instructions to enable tab-autocompletion.')
+    
+    if ARGCOMPLETE_ENABLED: argcomplete.autocomplete(parser)
     args = parser.parse_args()
+
+    if args.install_completion:
+        shell = os.environ.get('SHELL', '').split('/')[-1]
+        cmd_name = os.path.basename(__file__)
+        registration_cmd = f'eval "$(register-python-argcomplete {cmd_name})"'
+        
+        print("\n## Autocompletion Setup")
+        if not ARGCOMPLETE_ENABLED:
+            print(f"  {Style.RED}[!] Error: 'argcomplete' library not found.{Style.ENDC}")
+            print("  Please install it first: pip install argcomplete")
+            exit(1)
+            
+        print(f"  To enable tab-completion for this session, run:")
+        print(f"  {Style.BOLD}{registration_cmd}{Style.ENDC}")
+        
+        print(f"\n  To make it permanent, add the following line to your shell config:")
+        config_file = "~/.zshrc" if shell == 'zsh' else "~/.bashrc"
+        print(f"  echo '{registration_cmd}' >> {config_file}")
+        
+        print(f"\n  After adding the line, run: {Style.BOLD}source {config_file}{Style.ENDC}")
+        exit()
 
     if args.clear_cache:
         if os.path.exists(CONFIG_FILE): os.remove(CONFIG_FILE)
