@@ -13,9 +13,13 @@ import ipaddress
 from pathlib import Path
 
 # --- Script Info ---
-VERSION = "8.6"
+VERSION = "8.7"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
+
+v8.7 (2026-02-21):
+ - Fixed bug where -a/--all, --source, and --no-gps flags were not being passed to the IP details function.
+ - Restored MAC address display in local network details.
 
 v8.6 (2026-02-21):
  - Added --install-completion flag to provide setup instructions for tab-autocompletion.
@@ -534,20 +538,31 @@ def display_local_network_info(specific_interface_info=None, show_all=False, ver
     wifi_details = get_wifi_details(verbose=verbose)
     addrs = psutil.net_if_addrs()
     stats = psutil.net_if_stats()
-    interfaces_to_show = addrs.keys() if show_all or not specific_interface_info else [specific_interface_info['name']]
+    interfaces_to_show = list(addrs.keys()) if show_all or not specific_interface_info else [specific_interface_info['name']]
+    
+    found_interface = False
     for iface in interfaces_to_show:
         if iface not in addrs or not stats.get(iface) or not stats[iface].isup or 'lo' in iface.lower(): continue
+        
+        found_interface = True
         print(f"\n  Interface: {iface}")
         for addr in addrs[iface]:
             if addr.family == socket.AF_INET:
                 print(f"    {'Local IP:':<15} {addr.address}")
+            elif addr.family == psutil.AF_LINK:
+                print(f"    {'MAC Address:':<15} {addr.address}")
         if iface in wifi_details:
             details = wifi_details[iface]
-            print(f"    {'SSID:':<15} {details.get('SSID', 'N/A')}")
-            print(f"    {'Band:':<15} {details.get('Band', 'N/A')}")
+            if details.get('SSID'): print(f"    {'SSID:':<15} {details.get('SSID')}")
+            if details.get('Band'): print(f"    {'Band:':<15} {details.get('Band')}")
+
+    if not found_interface:
+        print("  No active network interfaces found.")
 
 if __name__ == "__main__":
+    # Always print version first
     print(f",where v{VERSION}")
+    
     parser = argparse.ArgumentParser(description="Fetches public and local network information.")
     parser.add_argument('-v', '--version', action='version', version=VERSION_HISTORY)
     parser.add_argument('-V', '--verbose', action='store_true', help='Enable verbose output.')
@@ -557,6 +572,9 @@ if __name__ == "__main__":
     parser.add_argument('-l', '--list', action='store_true', help='List IP history.')
     parser.add_argument('--quickest_dev', action='store_true', help='Show active WiFi devices.')
     parser.add_argument('--install-completion', action='store_true', help='Show instructions to enable tab-autocompletion.')
+    parser.add_argument('-G', '--no-gps', action='store_true', help='Skip GPS lookup.')
+    parser.add_argument('--source', type=str, help='Specify source interface.')
+    parser.add_argument('-a', '--all', action='store_true', help='Show all local interfaces.')
     
     if ARGCOMPLETE_ENABLED: argcomplete.autocomplete(parser)
     args = parser.parse_args()
@@ -565,21 +583,11 @@ if __name__ == "__main__":
         shell = os.environ.get('SHELL', '').split('/')[-1]
         cmd_name = os.path.basename(__file__)
         registration_cmd = f'eval "$(register-python-argcomplete {cmd_name})"'
-        
         print("\n## Autocompletion Setup")
         if not ARGCOMPLETE_ENABLED:
             print(f"  {Style.RED}[!] Error: 'argcomplete' library not found.{Style.ENDC}")
-            print("  Please install it first: pip install argcomplete")
             exit(1)
-            
-        print(f"  To enable tab-completion for this session, run:")
-        print(f"  {Style.BOLD}{registration_cmd}{Style.ENDC}")
-        
-        print(f"\n  To make it permanent, add the following line to your shell config:")
-        config_file = "~/.zshrc" if shell == 'zsh' else "~/.bashrc"
-        print(f"  echo '{registration_cmd}' >> {config_file}")
-        
-        print(f"\n  After adding the line, run: {Style.BOLD}source {config_file}{Style.ENDC}")
+        print(f"  Run: {Style.BOLD}{registration_cmd}{Style.ENDC}")
         exit()
 
     if args.clear_cache:
@@ -591,6 +599,17 @@ if __name__ == "__main__":
     if args.quickest_dev: display_quickest_devices(args.verbose); exit()
     if args.list: list_known_ips(data); exit()
 
-    data, public_ip, vpn_status = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh)
-    if args.speedtest and public_ip: data = run_speed_test(data, public_ip, vpn_status, verbose=args.verbose)
+    # Pass the correct arguments to get_ip_details
+    data, public_ip, vpn_status = get_ip_details(
+        data, 
+        verbose=args.verbose, 
+        force_refresh=args.force_refresh,
+        no_gps=args.no_gps,
+        source_interface=args.source,
+        show_all_interfaces=args.all
+    )
+    
+    if args.speedtest and public_ip: 
+        data = run_speed_test(data, public_ip, vpn_status, source_interface=args.source, verbose=args.verbose)
+        
     save_data(data, args.verbose)
