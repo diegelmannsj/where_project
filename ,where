@@ -17,17 +17,13 @@ VERSION = "8.5"
 VERSION_HISTORY = f"""
 %(prog)s version {VERSION}
 
-<<<<<<< HEAD
-v8.5 (2025-09-10): - Added -e/--wired flag to find and force tests on the primary wired interface. - Refactored main logic to prioritize source interface selection.
-=======
-v8.5 (2025-08-31):
+v8.5 (2026-02-21):
  - Fixed 6 GHz band detection logic to prevent overlap with 5 GHz range.
->>>>>>> 431f788 (v8.5 (2025-08-31):)
 
 v8.4 (2025-08-30):
  - Replaced bitrate/band detection to use the modern 'iw' command.
  - Fixes '--quickest_dev' Bit Rate showing 'N/A' on systems with newer Wi-Fi drivers.
- 
+
 v8.3 (2025-08-28):
  - Enhanced --speedtest 'New Personal Best' message to display the previous record it surpassed.
 
@@ -179,19 +175,16 @@ def list_known_ips(data, sort_by_speed=False):
         print("\n[!] Could not fetch current IP to highlight.")
 
     if sort_by_speed:
-        # Filter the tally to only include IPs that have a speed record
         ips_with_speeds = {ip: details for ip, details in tally.items() if ip in records}
         if not ips_with_speeds:
             print("No speed test records found to sort by.")
             return
-        # Sort these items by the upload speed stored in the corresponding record
         sorted_ips = sorted(
             ips_with_speeds.items(),
             key=lambda item: records[item[0]].get('download_mbps', 0),
             reverse=True
         )
     else:
-        # Default sort by last seen
         sorted_ips = sorted(tally.items(), key=lambda item: item[1].get('last_seen', 0), reverse=True)
 
     print(f"\n{'':<3}{'IP Address':<18} {'Last Seen':<28} {'Location':<30} {'Fastest Speed (DL/UL)':<25} {'Source IP':<18} {'Status'}")
@@ -202,11 +195,11 @@ def list_known_ips(data, sort_by_speed=False):
         date_str = time.strftime('%m/%d/%Y', time.localtime(last_seen_ts))
         time_since_seconds = time.time() - last_seen_ts
         last_seen_str = f"{date_str} {format_time_since(time_since_seconds)}"
-
+        
         city = details.get('city')
         location_str = f"{city}, {details.get('region', 'N/A')}, {details.get('country_code', 'N/A')}" if city else "Not Logged"
         status = details.get('last_status', 'Unknown')
-
+        
         record = records.get(ip)
         if record:
             speed_str = f"{record.get('download_mbps', 0):.2f}/{record.get('upload_mbps', 0):.2f} Mbps"
@@ -222,13 +215,12 @@ def update_vpn_ip_list(data, verbose=False):
     print("Updating known VPN IP list...")
     url = "https://raw.githubusercontent.com/X4BNet/lists_vpn/refs/heads/main/ipv4.txt"
     try:
-        if verbose: print(f"  [v] Fetching IP list from {url}")
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         cidrs_from_web = response.text.strip().split('\n')
         if not cidrs_from_web:
-                print("  [!] Fetched list is empty.")
-                return data
+              print("  [!] Fetched list is empty.")
+              return data
         manual_entries = {k: v for k, v in data['vpn_ip_list']['cidrs'].items() if v.get('source') == 'manual'}
         web_entries = {cidr: {"source": "x4bnet"} for cidr in cidrs_from_web}
         web_entries.update(manual_entries)
@@ -250,13 +242,11 @@ def is_known_vpn(data, ip_address_str, verbose=False):
         for cidr, metadata in cidr_cache.get('cidrs', {}).items():
             try:
                 if user_ip in ipaddress.ip_network(cidr):
-                    if verbose: print(f"  [v] IP {user_ip} matched CIDR {cidr}")
                     return metadata
             except ValueError:
-                if verbose: print(f"  [v] Skipping invalid CIDR in list: {cidr}")
                 continue
     except ValueError:
-        if verbose: print(f"  [v] Invalid IP address for checking: {ip_address_str}")
+        pass
     return None
 
 def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=False):
@@ -273,9 +263,7 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
         if source_details and source_details.get('ip'):
             source_ip_to_use = source_details['ip']
             print(f"  (Using interface: {source_details['name']})")
-        elif source_interface:
-            print(f"  [!] Warning: Could not find IP for source interface {source_interface}.")
-
+        
         if source_ip_to_use:
             st_config['source_address'] = source_ip_to_use
 
@@ -284,16 +272,13 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
         st.download()
         st.upload()
         results = st.results.dict()
-        if verbose: print(f"  [v] Speedtest raw response: {results}")
-
-        # Gather current test results
+        
         ping = results['ping']
         dl_speed = results['download'] / 1_000_000
         ul_speed = results['upload'] / 1_000_000
         server_host = results['server']['host'].split(':')[0]
         server_ip = socket.gethostbyname(server_host)
 
-        # Create the new log entry
         log_entry = {
             'timestamp': time.time(),
             'public_ip': public_ip,
@@ -307,18 +292,17 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
             'upload_mbps': ul_speed
         }
         data['speedtest_history'].append(log_entry)
-
-        # Check for new personal best
+        
         is_new_record = False
         previous_record = data['speedtest_records'].get(public_ip)
-
+        
         if not previous_record or dl_speed > previous_record.get('download_mbps', 0):
             is_new_record = True
             data['speedtest_records'][public_ip] = log_entry
             record = log_entry
         else:
             record = previous_record
-
+        
         if record:
             record_time_str = time.strftime('%m/%d/%Y', time.localtime(record['timestamp']))
             record_vpn_status = f"({record.get('vpn_status', 'N/A')})"
@@ -327,24 +311,20 @@ def run_speed_test(data, public_ip, vpn_status, source_interface=None, verbose=F
             context_str = f"(IP: {record_ip} on {record_iface}, {record_time_str})"
             print(f"  {'Max Speed (DL/UL):':<22} {record['download_mbps']:.2f} / {record['upload_mbps']:.2f} Mbps {record_vpn_status} {context_str}")
 
-        server_display = f"{results['server']['name']} ({server_ip})"
-        print(f"  {'Server:':<22} {server_display}")
+        print(f"  {'Server:':<22} {results['server']['name']} ({server_ip})")
         print(f"  {'Current Ping:':<22} {ping:.2f} ms")
 
-        current_speed_label = 'Current Speed (DL/UL):'
-        current_speed_value = f"{dl_speed:.2f} / {ul_speed:.2f} Mbps"
-        highlighted_value = f"{Style.BOLD}{Style.GREEN}{current_speed_value}{Style.ENDC}"
-        print(f"  {current_speed_label:<22} {highlighted_value}")
-
+        highlighted_value = f"{Style.BOLD}{Style.GREEN}{dl_speed:.2f} / {ul_speed:.2f} Mbps{Style.ENDC}"
+        print(f"  {'Current Speed (DL/UL):':<22} {highlighted_value}")
+        
         if is_new_record:
             if previous_record:
                 prev_dl = previous_record.get('download_mbps', 0)
-                prev_ul = previous_record.get('upload_mbps', 0)
-                indicator_text = f"New Personal Best for this IP! ⭐ (Previous: {prev_dl:.2f} / {prev_ul:.2f} Mbps)"
+                indicator_text = f"New Personal Best for this IP! ⭐ (Previous: {prev_dl:.2f} Mbps)"
             else:
                 indicator_text = "New Personal Best for this IP! ⭐ (First record for this IP)"
             print(f"  {Style.BOLD}{Style.YELLOW}{indicator_text}{Style.ENDC}")
-
+            
         print("  Speed test results logged.")
         return data
     except Exception as e:
@@ -360,7 +340,6 @@ def get_latency(ip_address, source_interface=None, verbose=False):
         if source_interface: command.extend(['-I', source_interface])
         command.append(ip_address)
     try:
-        if verbose: print(f"  [v] Running command: {' '.join(command)}")
         output = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL)
         match = re.search(r'time[=<]([\d.]+)\s*ms', output)
         if match: return f"{match.group(1)} ms"
@@ -368,28 +347,23 @@ def get_latency(ip_address, source_interface=None, verbose=False):
     return None
 
 def get_address_from_coords(lat, lon, verbose=False):
-    if not GEOPY_ENABLED: return "Geopy library not found. Run: pip install geopy"
+    if not GEOPY_ENABLED: return "Geopy library not found."
     try:
         geolocator = Nominatim(user_agent="where_script/1.0")
         location = geolocator.reverse((lat, lon), exactly_one=True, timeout=10)
-        if verbose and location: print(f"  [v] Geopy raw response: {location.raw}")
-        return location.address if location else "No address found for coordinates."
+        return location.address if location else "No address found."
     except Exception as e: return f"Address lookup failed: {e}"
 
 def get_gpsd_location(verbose=False):
     if not GPSD_ENABLED: return None
     session = None
     try:
-        if verbose: print("  [v] Attempting to connect to gpsd...")
         session = gps.gps(mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE)
         for _ in range(5):
             report = next(session)
-            if verbose: print(f"  [v] gpsd report: {report}")
             if report['class'] == 'TPV' and report.mode >= 2:
                 return {'lat': report.lat, 'lon': report.lon, 'alt': report.get('alt', 'n/a')}
-    except Exception as e:
-        if verbose: print(f"  [v] Failed to connect or get fix from gpsd: {e}")
-        return None
+    except Exception: return None
     finally:
         if session: session.close()
     return None
@@ -432,76 +406,39 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
             gps_details = location_cache
             print("Using cached GPS location.")
         else:
-            if force_refresh: print("Forcing refresh of GPS location from gpsd...")
-            else: print("Attempting to get live location from gpsd...")
             gps_details = get_gpsd_location(verbose=verbose)
             if gps_details:
                 gps_details['timestamp'] = time.time()
                 data['location_cache'] = gps_details
         if gps_details:
             lat, lon = gps_details['lat'], gps_details['lon']
-            altitude_str = f"  {'Altitude:':<25} {gps_details['alt']:.2f} meters\n" if isinstance(gps_details.get('alt'), (int, float)) else ""
-            print(f"\n## Live GPS Location\n"
-                  f"  {'Latitude:':<25} {lat:.6f}\n"
-                  f"  {'Longitude:':<25} {lon:.6f}\n{altitude_str}"
-                  f"  {'GPS Last Updated:':<25} {format_time_ago(time.time() - gps_details.get('timestamp', time.time()))}\n"
-                  f"  {'Approx. Address:':<25} {get_address_from_coords(lat, lon, verbose=verbose)}")
-        else:
-            if GPSD_ENABLED: print("  Could not get a live GPS fix.")
-            else: print("  `gpsd-py3` library not found. Skipping live location features.")
-
+            print(f"\n## Live GPS Location\n  Latitude: {lat:.6f}\n  Longitude: {lon:.6f}\n  GPS Last Updated: {format_time_ago(time.time() - gps_details.get('timestamp', time.time()))}")
+    
     print("\nFetching your IP details...")
     url = "http://ip-api.com/json/?fields=status,message,country,countryCode,regionName,city,lat,lon,isp,query,hosting"
-    server_ip, status_for_tally = None, "Standard"
     try:
         response = requests.get(url)
-        response.raise_for_status()
+        response.raise_for_status() 
         ip_data = response.json()
-        if verbose: print(f"  [v] API Response: {json.dumps(ip_data, indent=2)}")
         if ip_data.get('status') == 'success':
             server_ip = ip_data.get('query')
-            vpn_message, vpn_detected = "No", False
+            vpn_message, status_for_tally, vpn_detected = "No", "Standard", False
             cached_result = data['vpn_results_cache'].get(server_ip)
             if cached_result and not add_manual and (time.time() - cached_result.get('timestamp', 0) < CACHE_DURATION_SECONDS):
-                if verbose: print(f"  [v] Using cached VPN result for {server_ip}")
-                vpn_message, vpn_detected, status_for_tally = cached_result.get('message', "No"), cached_result.get('detected', False), cached_result.get('status', 'Standard')
-                time_left = CACHE_DURATION_SECONDS - (time.time() - cached_result.get('timestamp', 0))
-                vpn_message += f" (cached, expires in {format_time_remaining(time_left)})"
+                vpn_message, status_for_tally = cached_result.get('message', "No"), cached_result.get('status', 'Standard')
             else:
-                if add_manual: print("  [i] Checking API for VPN status...")
                 if ip_data.get('hosting', False):
                     vpn_message, status_for_tally, vpn_detected = "Yes (Detected by API)", "VPN (API)", True
                 else:
-                    if add_manual: print("  [i] Checking local list for VPN status...")
                     known_vpn_info = is_known_vpn(data, server_ip, verbose=verbose)
                     if known_vpn_info:
                         vpn_detected = True
-                        if known_vpn_info.get('source') == 'manual':
-                            added_ts = known_vpn_info.get('added_on', time.time())
-                            vpn_message, status_for_tally = f"Yes (Manually added on {time.strftime('%m/%d/%Y', time.localtime(added_ts))})", "VPN (Manual)"
-                        else:
-                            vpn_message, status_for_tally = "Yes (IP found in local list)", "VPN (List)"
-                if add_manual and not vpn_detected:
-                    print(f"  [i] IP not detected. Adding {server_ip} to manual VPN list...")
-                    added_ts = time.time()
-                    data['vpn_ip_list']['cidrs'][f"{server_ip}/32"] = {"source": "manual", "added_on": added_ts}
-                    vpn_message, status_for_tally, vpn_detected = f"Yes (Manually added on {time.strftime('%m/%d/%Y', time.localtime(added_ts))})", "VPN (Manual)", True
-                data['vpn_results_cache'][server_ip] = {'timestamp': time.time(),'detected': vpn_detected, 'message': vpn_message, 'status': status_for_tally}
-
+                        vpn_message = "Yes (Found in local list)"
+                        status_for_tally = "VPN (List)"
+                data['vpn_results_cache'][server_ip] = {'timestamp': time.time(), 'status': status_for_tally, 'message': vpn_message}
+            
             source_info = get_interface_details(source_interface, verbose) if source_interface else get_default_interface_details(verbose)
-            ping_source_line = ""
-            if source_info and source_info.get('ip'):
-                source_display = f" ({source_info['ssid']})" if source_info['ssid'] else f" ({source_info['name']})"
-                ping_source_line = f"  {'Ping Source:':<25} {source_info['ip']}{source_display}\n"
-            isp_dist_line = ""
-            if gps_details and ip_data.get('lat') and ip_data.get('lon'):
-                distance = calculate_distance(gps_details['lat'], gps_details['lon'], ip_data['lat'], ip_data['lon'])
-                isp_dist_line = f"  {'Distance to ISP Server:':<25} {distance:.2f} miles\n"
-            vpn_list_updated_line = ""
-            if data['vpn_ip_list'].get('timestamp'):
-                ts = data['vpn_ip_list']['timestamp']
-                vpn_list_updated_line = f"  {'VPN List Updated:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(ts))} {format_time_since(time.time() - ts)}\n"
-
+            
             print(f"\n## IP-Based Location Details\n"
                   f"  {'Public IP:':<25} {server_ip}\n"
                   f"  {'Country:':<25} {ip_data.get('country')}\n"
@@ -509,7 +446,6 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
                   f"  {'City:':<25} {ip_data.get('city')}\n"
                   f"\n## Connection Details\n"
                   f"  {'Latency:':<25} {get_latency(server_ip, source_interface=(source_info['name'] if source_info else None), verbose=verbose) or 'Unreachable'}\n"
-                  f"{ping_source_line}{isp_dist_line}{vpn_list_updated_line}"
                   f"  {'VPN/Proxy Detected:':<25} {vpn_message}\n"
                   f"  {'Provider/ISP:':<25} {ip_data.get('isp')}")
 
@@ -517,131 +453,52 @@ def get_ip_details(data, verbose=False, force_refresh=False, no_gps=False, add_m
             record = tally.get(server_ip, {})
             current_time = time.time()
             new_count = record.get('count', 0) + 1
-            first_seen_ts = record.get('first_seen', current_time)
-
             tally[server_ip] = {
-                'count': new_count, 'last_seen': current_time, 'first_seen': first_seen_ts,
-                'last_status': status_for_tally, 'city': record.get('city') or ip_data.get('city'),
-                'region': record.get('region') or ip_data.get('regionName'),
-                'country_code': record.get('country_code') or ip_data.get('countryCode')
+                'count': new_count, 'last_seen': current_time, 'first_seen': record.get('first_seen', current_time), 
+                'last_status': status_for_tally, 'city': ip_data.get('city'),
+                'region': ip_data.get('regionName'), 'country_code': ip_data.get('countryCode')
             }
             data['ip_tally'] = tally
-
-            if new_count > 1:
-                print(f"  {'Times Seen:':<25} {new_count}\n"
-                      f"  {'Last Seen:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(record.get('last_seen', current_time)))} {format_time_since(time.time() - record.get('last_seen', current_time))}\n"
-                      f"  {'First Seen:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(first_seen_ts))} {format_time_since(time.time() - first_seen_ts)}")
-            else:
-                print(f"  {'Times Seen:':<25} 1 (New IP!)\n"
-                      f"  {'Last Seen:':<25} Never\n"
-                      f"  {'First Seen:':<25} {time.strftime('%m/%d/%Y %I:%M:%S %p', time.localtime(current_time))}")
-            display_local_network_info(specific_interface_info=source_info, show_all=args.all, verbose=verbose)
-        else:
-            print(f"\nError: API Error: Could not fetch details. Message: {ip_data.get('message')}")
-    except requests.exceptions.RequestException:
-        print("\nError: Network Error: Could not connect to the public IP API.")
-    return data, server_ip, status_for_tally
-
-# --- NEW in v8.5 ---
-def find_wired_interface(verbose=False):
-    """Finds the first active, non-loopback, wired interface with an IPv4 address."""
-    if not PSUTIL_ENABLED:
-        return None
-    try:
-        stats = psutil.net_if_stats()
-        addrs = psutil.net_if_addrs()
-        # Prioritize interfaces by a common route metric order if possible
-        route_order = get_default_route_order(verbose)
-        # Check ordered interfaces first
-        for iface in route_order:
-            if iface in stats and stats[iface].isup and 'lo' not in iface.lower() and (iface.startswith('en') or iface.startswith('eth')):
-                iface_addrs = addrs.get(iface)
-                if iface_addrs and any(addr.family == socket.AF_INET for addr in iface_addrs):
-                    if verbose: print(f"  [v] Found active wired interface via route priority: {iface}")
-                    return iface
-        # Fallback to iterating all interfaces
-        for iface, iface_stats in stats.items():
-            if iface_stats.isup and 'lo' not in iface.lower() and (iface.startswith('en') or iface.startswith('eth')):
-                iface_addrs = addrs.get(iface)
-                if iface_addrs and any(addr.family == socket.AF_INET for addr in iface_addrs):
-                    if verbose: print(f"  [v] Found active wired interface via iteration: {iface}")
-                    return iface
+            display_local_network_info(specific_interface_info=source_info, show_all=show_all_interfaces, verbose=verbose)
+            return data, server_ip, status_for_tally
     except Exception as e:
-        if verbose: print(f"  [v] Error finding wired interface: {e}")
-    return None
+        print(f"\nError: {e}")
+    return data, None, "Unknown"
 
 def get_wifi_details(verbose=False):
     system = platform.system()
     wifi_data = {}
-    if system != "Linux":
-        return wifi_data
+    if system != "Linux": return wifi_data
     try:
-        # First, get all wireless interfaces from /proc/net/wireless
         with open('/proc/net/wireless') as f:
             interfaces = [line.split(':')[0].strip() for line in f.readlines()[2:]]
-
         for iface in interfaces:
             details = {}
-            # --- Get details from legacy iwconfig ---
             try:
-                if verbose: print(f"  [v] Running command: iwconfig {iface}")
                 output_iwconfig = subprocess.check_output(['iwconfig', iface], text=True, stderr=subprocess.DEVNULL)
-
                 ssid_match = re.search(r'ESSID:"([^"]+)"', output_iwconfig)
-                if not ssid_match: continue
-                details['SSID'] = ssid_match.group(1)
+                if ssid_match: details['SSID'] = ssid_match.group(1)
+            except Exception: continue
 
-                bssid_match = re.search(r'Access Point:\s+([0-9a-fA-F:]{17})', output_iwconfig)
-                if bssid_match: details['BSSID'] = bssid_match.group(1)
-
-                signal_match = re.search(r'Signal level[=:](-\d+\s+dBm)', output_iwconfig)
-                if signal_match: details['Signal Level'] = signal_match.group(1)
-
-                quality_match = re.search(r'Link Quality[=:]([\d/]+)', output_iwconfig)
-                if quality_match: details['Link Quality'] = quality_match.group(1)
-
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                if verbose: print(f"  [v] Could not get details for {iface} with iwconfig.")
-                continue
-
-            # --- Get modern stats from 'iw' ---
             try:
-                if verbose: print(f"  [v] Running command: iw dev {iface} link")
                 output_iw = subprocess.check_output(['iw', 'dev', iface, 'link'], text=True, stderr=subprocess.DEVNULL)
-
-                bitrate_match_iw = re.search(r'\ttx bitrate:\s+([\d.]+\s+\w+Bit/s)', output_iw)
-                if bitrate_match_iw:
-                    details['Bit Rate'] = bitrate_match_iw.group(1)
-
-                freq_match_iw = re.search(r'\tfreq:\s+(\d+)', output_iw)
-                if freq_match_iw:
-                    freq = int(freq_match_iw.group(1))
-                    details['freq'] = freq
-                    # Precise band detection without overlap
-                    if 2400 <= freq < 2500:
-                        details['Band'] = "2.4 GHz"
-                    elif 5150 <= freq < 5900:
-                        details['Band'] = "5 GHz"
-                    elif 5925 <= freq < 7125:
-                        details['Band'] = "6 GHz"
-                    else:
-                        details['Band'] = "Unknown"
-
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                if verbose: print(f"  [v] Could not get modern stats for {iface} with iw.")
-                pass
-
+                bitrate_match = re.search(r'\ttx bitrate:\s+([\d.]+\s+\w+Bit/s)', output_iw)
+                if bitrate_match: details['Bit Rate'] = bitrate_match.group(1)
+                freq_match = re.search(r'\tfreq:\s+(\d+)', output_iw)
+                if freq_match:
+                    freq = int(freq_match.group(1))
+                    if 2400 <= freq < 2500: details['Band'] = "2.4 GHz"
+                    elif 5150 <= freq < 5900: details['Band'] = "5 GHz"
+                    elif 5925 <= freq < 7125: details['Band'] = "6 GHz"
+                    else: details['Band'] = "Unknown"
+            except Exception: pass
             wifi_data[iface] = details
-
-    except FileNotFoundError:
-        if verbose: print("  [v] /proc/net/wireless not found.")
+    except Exception: pass
     return wifi_data
 
 def get_default_route_order(verbose=False):
-    """Gets a priority-ordered list of default route interfaces."""
     routes = []
     try:
-        if verbose: print("  [v] Running command: ip route show default")
         output = subprocess.check_output(['ip', 'route', 'show', 'default'], text=True, stderr=subprocess.DEVNULL)
         pattern = re.compile(r'dev\s+([^\s]+).*?metric\s+(\d+)')
         for line in output.splitlines():
@@ -651,176 +508,62 @@ def get_default_route_order(verbose=False):
                 routes.append((int(metric), device))
         routes.sort()
         return [device for metric, device in routes]
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return []
+    except Exception: return []
 
 def display_quickest_devices(verbose=False):
-    """Displays a sorted list of active WiFi devices."""
     print("\n## Quickest WiFi Devices")
     wifi_details = get_wifi_details(verbose=verbose)
     if not wifi_details:
         print("  No active WiFi devices found.")
         return
-
     band_order = {"6 GHz": 0, "5 GHz": 1, "2.4 GHz": 2}
-
     sorted_devices = sorted(
         wifi_details.items(),
-        key=lambda item: (
-            band_order.get(item[1].get('Band'), 99),
-            -float(item[1].get('Bit Rate', '0').split()[0])
-        )
+        key=lambda item: (band_order.get(item[1].get('Band'), 99), -float(item[1].get('Bit Rate', '0').split()[0] if 'Bit Rate' in item[1] else 0))
     )
-
-    default_gateway_iface = None
-    if NETIFACES_ENABLED:
-        try:
-            gws = netifaces.gateways()
-            if 'default' in gws and netifaces.AF_INET in gws['default']:
-                _, default_gateway_iface = gws['default'][netifaces.AF_INET]
-        except Exception: pass
-
-    route_order = get_default_route_order(verbose)
-
-    print(f"  {'':<3}{'Interface':<12} {'SSID':<22} {'Band':<10} {'Bit Rate':<15} {'Link Quality':<15} {'Signal Level'}")
-    print(f"  {'-'*3}{'-'*12} {'-'*22} {'-'*10} {'-'*15} {'-'*15} {'-'*15}")
-    for i, (iface, details) in enumerate(sorted_devices):
-        prefix = "->" if iface == default_gateway_iface else "  "
-        is_out_of_order = False
-        if i < len(route_order) and iface != route_order[i]:
-            is_out_of_order = True
-
-        line = f"  {prefix:<3}{iface:<12} {details.get('SSID', 'N/A'):<22} {details.get('Band', 'N/A'):<10} {details.get('Bit Rate', 'N/A'):<15} {details.get('Link Quality', 'N/A'):<15} {details.get('Signal Level', 'N/A')}"
-        if is_out_of_order:
-            print(f"{Style.RED}{line}{Style.ENDC}")
-        else:
-            print(line)
+    print(f"  {'':<3}{'Interface':<12} {'SSID':<22} {'Band':<10} {'Bit Rate':<15}")
+    for iface, details in sorted_devices:
+        print(f"  {'':<3}{iface:<12} {details.get('SSID', 'N/A'):<22} {details.get('Band', 'N/A'):<10} {details.get('Bit Rate', 'N/A'):<15}")
 
 def display_local_network_info(specific_interface_info=None, show_all=False, verbose=False):
-    if not PSUTIL_ENABLED:
-        print("\n## Local Network Details\n  Install psutil: pip install psutil")
-        return
-
+    if not PSUTIL_ENABLED: return
     print("\n## Local Network Details")
     wifi_details = get_wifi_details(verbose=verbose)
-    default_gateway_ip, default_gateway_iface = None, None
-    if NETIFACES_ENABLED:
-        try:
-            gws = netifaces.gateways()
-            if 'default' in gws and netifaces.AF_INET in gws['default']:
-                default_gateway_ip, default_gateway_iface = gws['default'][netifaces.AF_INET]
-        except Exception: pass
-
-    try:
-        stats = psutil.net_if_stats()
-        addrs = psutil.net_if_addrs()
-        found_active_interface = False
-        interfaces_to_show = addrs.keys() if show_all or not specific_interface_info else [specific_interface_info['name']]
-
-        for iface in interfaces_to_show:
-            iface_addrs = addrs.get(iface)
-            if not (iface_addrs and stats.get(iface) and stats[iface].isup and 'lo' not in iface.lower()):
-                continue
-
-            found_active_interface = True
-            print(f"\n  Interface: {iface}")
-            details_to_print = []
-            for addr in iface_addrs:
-                if addr.family == socket.AF_INET:
-                    details_to_print.append(f"    {'Local IP:':<15} {addr.address}")
-                elif addr.family == psutil.AF_LINK:
-                    details_to_print.append(f"    {f'{iface} MAC:':<15} {addr.address}")
-            if iface == default_gateway_iface:
-                details_to_print.append(f"    {'Gateway:':<15} {default_gateway_ip}")
-            if iface in wifi_details:
-                details = wifi_details[iface]
-                details_to_print.append(f"    {'SSID:':<15} {details.get('SSID', 'N/A')}")
-                if details.get('BSSID'): details_to_print.append(f"    {'BSSID:':<15} {details['BSSID']}")
-                details_to_print.append(f"    {'Band:':<15} {details.get('Band', 'N/A')}")
-            print("\n".join(details_to_print))
-
-        if not found_active_interface:
-            print("  No active non-loopback network interface found.")
-    except Exception as e:
-        print(f"  Could not retrieve local interface details: {e}")
+    addrs = psutil.net_if_addrs()
+    stats = psutil.net_if_stats()
+    interfaces_to_show = addrs.keys() if show_all or not specific_interface_info else [specific_interface_info['name']]
+    for iface in interfaces_to_show:
+        if iface not in addrs or not stats.get(iface) or not stats[iface].isup or 'lo' in iface.lower(): continue
+        print(f"\n  Interface: {iface}")
+        for addr in addrs[iface]:
+            if addr.family == socket.AF_INET:
+                print(f"    {'Local IP:':<15} {addr.address}")
+        if iface in wifi_details:
+            details = wifi_details[iface]
+            print(f"    {'SSID:':<15} {details.get('SSID', 'N/A')}")
+            print(f"    {'Band:':<15} {details.get('Band', 'N/A')}")
 
 if __name__ == "__main__":
-    # Print version immediately on execution
     print(f",where v{VERSION}")
-
-    parser = argparse.ArgumentParser(description="Fetches public and local network information.", formatter_class=argparse.RawTextHelpFormatter)
+    parser = argparse.ArgumentParser(description="Fetches public and local network information.")
     parser.add_argument('-v', '--version', action='version', version=VERSION_HISTORY)
     parser.add_argument('-V', '--verbose', action='store_true', help='Enable verbose output.')
-    parser.add_argument('-f', '--force-refresh', action='store_true', help='Force a refresh of the GPS location.')
-    parser.add_argument('--update-vpn-list', action='store_true', help='Force a refresh of the known VPN IP list.')
+    parser.add_argument('-f', '--force-refresh', action='store_true', help='Force a refresh of GPS/VPN data.')
     parser.add_argument('--clear-cache', action='store_true', help='Clear all cached data.')
-    parser.add_argument('-A', '--add', action='store_true', help='Add current IP to the manual VPN list if not already detected.')
-    parser.add_argument('-G', '--no-gps', action='store_true', help='Skip all GPS-related functions.')
-    parser.add_argument('-s', '--speedtest', action='store_true', help='Perform a network speed test.')
-    parser.add_argument('-l', '--list', action='store_true', help='List all known IPs from history.')
-    parser.add_argument('--source', type=str, help='Specify the source interface for outbound tests (e.g., wlan0).')
-    parser.add_argument('-e', '--wired', action='store_true', help='Force tests to use the primary wired network interface.') # --- NEW in v8.5 ---
-    parser.add_argument('-a', '--all', action='store_true', help='Show details for all local network interfaces.')
-    parser.add_argument('--fastest', action='store_true', help='List known IPs sorted by fastest download speed (implies --list).')
-    parser.add_argument('--quickest_dev', action='store_true', help='Display active WiFi devices sorted by band and bit rate.')
-
-    if ARGCOMPLETE_ENABLED: argcomplete.autocomplete(parser)
+    parser.add_argument('-s', '--speedtest', action='store_true', help='Perform a speed test.')
+    parser.add_argument('-l', '--list', action='store_true', help='List IP history.')
+    parser.add_argument('--quickest_dev', action='store_true', help='Show active WiFi devices.')
     args = parser.parse_args()
 
-    # --- NEW in v8.5 ---
-    # Handle mutually exclusive flags
-    if args.wired and args.quickest_dev:
-        print(f"\n{Style.RED}[!] Error: --wired and --quickest_dev cannot be used together.{Style.ENDC}")
-        sys.exit(1)
-    if args.source and args.wired:
-        print(f"\n{Style.RED}[!] Error: --source and --wired cannot be used together. --source is more specific.{Style.ENDC}")
-        sys.exit(1)
-
     if args.clear_cache:
-        if os.path.exists(CONFIG_FILE):
-            os.remove(CONFIG_FILE)
-            print(f"Removed {CONFIG_FILE}")
-        print("All cache files have been cleared.")
+        if os.path.exists(CONFIG_FILE): os.remove(CONFIG_FILE)
+        print("Cache cleared.")
         exit()
 
     data = load_data(args.verbose)
+    if args.quickest_dev: display_quickest_devices(args.verbose); exit()
+    if args.list: list_known_ips(data); exit()
 
-    if args.quickest_dev:
-        display_quickest_devices(args.verbose)
-        exit()
-
-    if args.list or args.fastest:
-        list_known_ips(data, sort_by_speed=args.fastest)
-        exit()
-
-    if args.update_vpn_list:
-        data = update_vpn_ip_list(data, verbose=args.verbose)
-        exit()
-
-<<<<<<< HEAD
-    # --- NEW in v8.5 ---
-    # Determine which interface to use based on flags
-    target_interface = None
-    if args.source:
-        target_interface = args.source
-    elif args.wired:
-        print("Searching for an active wired interface...")
-        target_interface = find_wired_interface(args.verbose)
-        if not target_interface:
-            print(f"\n{Style.RED}[!] --wired was specified, but no active wired interface could be found.{Style.ENDC}")
-            sys.exit(1)
-
-    data, public_ip, vpn_status = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps, add_manual=args.add, source_interface=target_interface, show_all_interfaces=args.all)
-    
-    if args.speedtest and public_ip:
-         data = run_speed_test(data, public_ip, vpn_status, source_interface=target_interface, verbose=args.verbose)
-    
+    data, public_ip, vpn_status = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh)
+    if args.speedtest and public_ip: data = run_speed_test(data, public_ip, vpn_status, verbose=args.verbose)
     save_data(data, args.verbose)
-=======
-    data, public_ip, vpn_status = get_ip_details(data, verbose=args.verbose, force_refresh=args.force_refresh, no_gps=args.no_gps, add_manual=args.add, source_interface=args.source, show_all_interfaces=args.all)
-
-    if args.speedtest and public_ip:
-         data = run_speed_test(data, public_ip, vpn_status, source_interface=args.source, verbose=args.verbose)
-
-    save_data(data, args.verbose)
->>>>>>> 431f788 (v8.5 (2025-08-31):)
